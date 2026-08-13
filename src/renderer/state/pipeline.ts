@@ -494,10 +494,17 @@ async function ensureStationAgent(ctx: EngineCtx, st: Station): Promise<void> {
       return
     }
     const launch = await composeStationLaunch(ctx, st)
-    const ok = await ctx.api.pty.sendText(st.id, launch)
+    const ok = await ctx.api.pty.sendText(st.id, launch.cmd)
     if (!ok) throw new Error('agent-not-up')
     await waitForAgentUp(st.id, AGENT_UP_TIMEOUT_MS)
     await sleep(AGENT_SETTLE_MS)
+    // A fresh launch that carried the assignment as its initial prompt starts an ACK TURN the
+    // moment the CLI is up. Returning while that turn runs would let startAgentIssue arm
+    // `awaitTurn` in the middle of it — and if the ack's `working` transition lands after the
+    // arm, the ack's `done` advances the issue before its prompt ever ran. Wait the ack out
+    // (both phases bounded, fail-open: past a cap the stale-turn guard is the backstop, and
+    // the issue prompt is queued in the TUI either way).
+    if (launch.carriesAssignment) await waitForAckTurn(st.id)
   })()
   stationLaunches.set(st.id, run)
   try {
@@ -516,7 +523,10 @@ async function ensureStationAgent(ctx: EngineCtx, st: Station): Promise<void> {
  * folder the station carries) — the pane's shell may have been spawned before the sandbox was
  * connected, so the cwd is entered explicitly, single-quoted (user-picked text on a shell line).
  */
-async function composeStationLaunch(ctx: EngineCtx, st: Station): Promise<string> {
+async function composeStationLaunch(
+  ctx: EngineCtx,
+  st: Station
+): Promise<{ cmd: string; carriesAssignment: boolean }> {
   const p = pipelineOf(ctx.projectId)
   const satellites = ctx.getSatellites()
   const cwd = sandboxCwdFor(st.id, p.edges, satellites) ?? st.cwd
@@ -524,7 +534,11 @@ async function composeStationLaunch(ctx: EngineCtx, st: Station): Promise<string
   const known = useAgentStatus.getState().byId[st.id]?.sessionId || st.agentSessionId
   if (known) {
     const resume = resumeCommand('claude', known)
-    if (resume) return prefixLaunchWithCd(withPermissionMode(resume, 'claude', mode), cwd)
+    if (resume)
+      return {
+        cmd: prefixLaunchWithCd(withPermissionMode(resume, 'claude', mode), cwd),
+        carriesAssignment: false
+      }
   }
   const assignment = composeAssignmentPrompt(assignmentTextFor(st.id, p.edges, satellites))
   const proto = createAgentNode(
@@ -541,10 +555,30 @@ async function composeStationLaunch(ctx: EngineCtx, st: Station): Promise<string
   )
   const minted = proto.data.agentSessionId
   if (minted) ctx.updateNodeData(st.id, { agentSessionId: minted })
-  return prefixLaunchWithCd(proto.data.initialCommand as string, cwd)
+  return {
+    cmd: prefixLaunchWithCd(proto.data.initialCommand as string, cwd),
+    carriesAssignment: !!assignment
+  }
 }
 
 const PANE_WAIT_MS = 10_000
+const ACK_START_TIMEOUT_MS = 10_000
+const ACK_END_TIMEOUT_MS = 60_000
+
+/** Waits out the assignment ACK TURN: first for it to BEGIN (`working` — it may not have
+ *  started when the settle window closes), then for it to END. Both phases bounded, fail-open. */
+async function waitForAckTurn(nodeId: string): Promise<void> {
+  const startedAt = Date.now()
+  while (useAgentStatus.getState().byId[nodeId]?.state !== 'working') {
+    if (Date.now() - startedAt > ACK_START_TIMEOUT_MS) return
+    await sleep(300)
+  }
+  const runningAt = Date.now()
+  while (useAgentStatus.getState().byId[nodeId]?.state === 'working') {
+    if (Date.now() - runningAt > ACK_END_TIMEOUT_MS) return
+    await sleep(500)
+  }
+}
 
 function waitForPane(ctx: EngineCtx, nodeId: string, timeoutMs: number): Promise<string | null> {
   return new Promise((resolve) => {
