@@ -32,11 +32,11 @@ export const TERMINAL_THEMES: readonly TerminalTheme[] = [
     label: 'nodeterm Dark',
     dark: true,
     theme: {
-      background: '#1e1e1e',
-      foreground: '#e6e6e6',
-      cursor: '#ffffff',
-      cursorAccent: '#1e1e1e',
-      selectionBackground: '#ffffff4d',
+      background: '#161618',
+      foreground: '#ececee',
+      cursor: '#e05fa6',
+      cursorAccent: '#161618',
+      selectionBackground: '#e05fa640',
       // xterm's built-in default palette (Tango) — see the module comment.
       black: '#2e3436',
       red: '#cc0000',

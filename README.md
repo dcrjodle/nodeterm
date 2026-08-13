@@ -2,14 +2,18 @@
 
 <img src="docs/assets/nodeterm.png" alt="nodeterm" width="120" height="120" />
 
-# nodeterm
+# nodeterm loop factory
 
-**A node-based terminal manager — your terminals and agents on an infinite canvas.**
+**A software factory on a canvas — chain agents into deterministic loops and queue issues
+through them.**
 
-Multiple real terminals live as draggable nodes on a single pan/zoom canvas, and every
-project doubles as a **Trello-style board of live Claude Code sessions**. Built for
-people with ADHD and scattered workflows: a spatial layout instead of a stack of
-hidden tabs.
+This fork of [eneskirca/nodeterm](https://github.com/eneskirca/nodeterm) turns the node-based
+terminal manager into a **loop-engineering factory**: three station kinds — **agent**
+(cli + assignment + sandbox), **decision** (deterministic keyword routing, with loops back),
+and **connector** (GitHub/Slack/Gmail context) — chain on the canvas, mirror as kanban columns,
+and **issues flow through the chain**, moving across the board as each agent finishes its turn.
+Everything underneath is still real terminals in tmux on an infinite pan/zoom canvas, restyled
+after Figma Weave.
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20(arm64%20%2B%20x64)%20·%20Linux%20(x64)-black)](https://nodeterm.dev)
 [![Built with Electron](https://img.shields.io/badge/built%20with-Electron-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
@@ -36,6 +40,26 @@ hidden tabs.
   <br/>
   <sub>▶ <a href="docs/assets/hero-tour.mp4">Watch the 30-second tour with sound</a></sub>
 </div>
+
+## The loop factory
+
+A project's pipeline is drawn, not configured:
+
+1. **Chain stations on the canvas** — drag from a station's right port to the next station's
+   left port. An **agent** station holds three blocks: the *cli* it runs (Claude Code, Codex,
+   Gemini, or a custom CLI), a standing *assignment* (instructions injected with every issue),
+   and a *sandbox* (the folder its tmux-backed session works in). A **decision** station routes
+   issues by ordered `contains "keyword" → route` rules — `next`, `back` (that's the loop), or a
+   named branch — or waits for a manual call. A **connector** station contributes integration
+   context downstream (env var *names* only; secrets never leave your environment).
+2. **Every station is a kanban column** (right-click to remove/add it). The board shows
+   `Queue → stations → Done` above the session columns.
+3. **Queue issues** from the board's `+ Add issue`, the canvas right-click, or ⌘K. Each issue
+   is injected into the first agent as one deterministic prompt; when the agent's turn
+   completes (hook-driven, not output-scraped), the issue advances along the chain — and you
+   watch the card move across the board. Decisions can send it back around: loop engineering.
+4. **Watch any agent** — the station's *Watch* button opens a real terminal co-attached to the
+   same tmux session.
 
 ## Why nodeterm
 

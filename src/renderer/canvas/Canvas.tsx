@@ -64,6 +64,7 @@ import {
   WEBGL_GESTURE_SETTLE_MS
 } from '../terminal/webgl-budget'
 import { StickyNode } from '../nodes/StickyNode'
+import { AgentStationNode, ConnectorStationNode, DecisionStationNode } from '../nodes/StationNodes'
 import { GroupNode, setWorktreeActionHandler } from '../nodes/GroupNode'
 import { LazyEditorNode, LazyDiffNode } from '../nodes/lazyMonacoNodes'
 import { DinoNode } from '../nodes/DinoNode'
@@ -189,6 +190,18 @@ import { prepareQuickOpenFiles, type QuickOpenIndexedFile } from '../lib/quickOp
 import { opensInEditor } from '../lib/openTarget'
 import { newEntryPath, parentDir } from '../lib/explorerCreate'
 import { useProjects } from '../state/projects'
+import {
+  addIssue as pipelineAddIssue,
+  prunePipeline,
+  releaseStationClient,
+  scheduleTick,
+  setEngineCtx,
+  usePipelineFx,
+  wireAgentTransitions,
+  type EngineCtx
+} from '../state/pipeline'
+import { stationsOf } from '../lib/pipeline'
+import { isPipelineKind } from '@shared/types'
 import { useAgentStatus } from '../state/agentStatus'
 import { useCodexIdentity, codexFallbackText } from '../state/codexIdentity'
 import { useTeamAccessEvents } from '../state/teamAccess'
@@ -318,6 +331,9 @@ import {
   WORKTREE_GROUP_SIZE,
   createSshTerminalNode,
   createStickyNode,
+  createAgentStationNode,
+  createDecisionNode,
+  createConnectorNode,
   createTerminalNode,
   nodeSshFor,
   createVideoNode,
@@ -989,6 +1005,7 @@ export function Canvas() {
   const settings = useSettings((s) => s.settings)
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, zoom: 1 })
   const nodesRef = useRef<CanvasNode[]>(nodes)
+
   /**
    * WHICH project's nodes `nodesRef` currently holds — the epoch tag that pairs with
    * `activeProjectId` (see canCommitCanvas). Written only where the load effect installs a
@@ -1168,7 +1185,10 @@ export function Canvas() {
       dino: withNodeBoundary(DinoNode),
       video: withNodeBoundary(VideoNode),
       web: withNodeBoundary(WebNode),
-      browser: withNodeBoundary(BrowserNode)
+      browser: withNodeBoundary(BrowserNode),
+      agent: withNodeBoundary(AgentStationNode),
+      decision: withNodeBoundary(DecisionStationNode),
+      connector: withNodeBoundary(ConnectorStationNode)
     }),
     []
   )
@@ -1436,6 +1456,41 @@ export function Canvas() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- depEdgeSig IS the ref's signature
     [depEdgeSig]
   )
+  // Pipeline edges are derived straight from the store (persisted on project.pipeline) —
+  // never React Flow state, so the engine and the canvas cannot disagree about the chain.
+  const pipeEdgeSig = useProjects((s) => {
+    const p = s.projects.find((x) => x.id === s.activeProjectId)?.pipeline
+    return p ? p.edges.map((e) => `${e.id}:${e.label ?? ''}`).join('|') : ''
+  })
+  const pipeTransit = usePipelineFx((s) => s.transit)
+  const pipeEdges = useMemo<Edge[]>(() => {
+    const store = useProjects.getState()
+    const p = store.getProject(store.activeProjectId)?.pipeline
+    if (!p?.edges.length) return []
+    return p.edges.map((e) => {
+      const hot = !!pipeTransit[e.id]
+      return {
+        id: e.id,
+        source: e.from,
+        target: e.to,
+        sourceHandle: 'pipe-out',
+        targetHandle: 'pipe-in',
+        type: 'default',
+        animated: hot,
+        ...(e.label ? { label: e.label } : {}),
+        labelStyle: { fill: 'var(--muted)', fontSize: 11, fontWeight: 600 },
+        labelBgStyle: { fill: 'var(--surface-overlay)', fillOpacity: 0.95 },
+        labelBgPadding: [6, 3] as [number, number],
+        labelBgBorderRadius: 6,
+        className: 'pipe-edge',
+        style: hot
+          ? { stroke: 'var(--success)', strokeWidth: 2 }
+          : { stroke: 'var(--accent)', strokeWidth: 1.5, opacity: 0.85 }
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipeEdgeSig, pipeTransit])
+
   const displayEdges = useMemo(() => {
     const stickyIds = new Set(stickySig ? stickySig.split('|') : [])
     // ONE edge per pair. A node an agent opens gets both a rope (lineage) and a context bridge
@@ -1497,8 +1552,9 @@ export function Canvas() {
       ephemeralEdges.length || ropes.length || depEdges.length
         ? [...ephemeralEdges, ...ropes, ...depEdges]
         : []
-    return extra.length ? [...decorated, ...extra] : decorated
-  }, [linkEdges, ephemeralEdges, controlEdges, accent, stickySig, depEdges])
+    const merged = extra.length ? [...decorated, ...extra] : decorated
+    return pipeEdges.length ? [...merged, ...pipeEdges] : merged
+  }, [linkEdges, ephemeralEdges, controlEdges, accent, stickySig, depEdges, pipeEdges])
 
   // Header pin button (and ⌘⇧L): toggle the persisted pin preference. Clears the transient
   // dismiss so (re)pinning shows the docked panel; unpinning collapses it to hover-peek.
@@ -2372,6 +2428,23 @@ export function Canvas() {
   const onConnect = useCallback(
     (c: Connection) => {
       if (!c.source || !c.target || c.source === c.target) return
+      // Pipeline edges: a connection between two stations chains them (persisted on
+      // project.pipeline, never a context link). Direction is the drag direction.
+      const srcNode = nodesRef.current.find((n) => n.id === c.source)
+      const tgtNode = nodesRef.current.find((n) => n.id === c.target)
+      if (srcNode && tgtNode && isPipelineKind(srcNode.type) && isPipelineKind(tgtNode.type)) {
+        const store = useProjects.getState()
+        const pid = store.activeProjectId
+        const p = store.getProject(pid)?.pipeline ?? { edges: [], issues: [] }
+        if (p.edges.some((e) => e.from === c.source && e.to === c.target)) return
+        store.setProjectPipeline(pid, {
+          ...p,
+          edges: [...p.edges, { id: `pipe-${c.source}-${c.target}`, from: c.source, to: c.target }]
+        })
+        markDirty()
+        if (engineCtxRef.current) scheduleTick(engineCtxRef.current)
+        return
+      }
       const se = linkEndpointOf(c.source)
       const te = linkEndpointOf(c.target)
       if (!se || !te) return
@@ -2429,6 +2502,18 @@ export function Canvas() {
   // Double-click a context link to remove it (ephemeral subagent/loop edges are left alone).
   const onEdgeDoubleClick = useCallback(
     (_e: React.MouseEvent, edge: Edge) => {
+      // Pipeline edges: double-click unchains (same gesture as context links).
+      if (edge.id.startsWith('pipe-')) {
+        const store = useProjects.getState()
+        const pid = store.activeProjectId
+        const p = store.getProject(pid)?.pipeline
+        if (p) {
+          store.setProjectPipeline(pid, { ...p, edges: p.edges.filter((x) => x.id !== edge.id) })
+          markDirty()
+          if (engineCtxRef.current) scheduleTick(engineCtxRef.current)
+        }
+        return
+      }
       // Control ropes are removable the same way as context links (ephemeral edges are not).
       if (controlEdgesRef.current.some((b) => b.id === edge.id)) {
         // A rope may be the only DRAWN edge for a pair that also has a context bridge (see
@@ -3315,6 +3400,76 @@ export function Canvas() {
     [commitActiveToStore, writeDisk]
   )
 
+
+  // Loop-engine context: published for station cards / board actions, torn down with the
+  // project. The engine only ever acts on the ACTIVE project (live React Flow nodes).
+  const engineCtxRef = useRef<EngineCtx | null>(null)
+  useEffect(() => {
+    if (!activeProjectId) {
+      setEngineCtx(null)
+      engineCtxRef.current = null
+      return
+    }
+    const ctx: EngineCtx = {
+      api,
+      projectId: activeProjectId,
+      getStations: () => stationsOf(flowToNodeStates(nodesRef.current)),
+      updateNodeData: (nodeId, patch) =>
+        setNodes((ns) => ns.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n)))
+    }
+    engineCtxRef.current = ctx
+    setEngineCtx(ctx)
+    const unwire = wireAgentTransitions(ctx)
+    scheduleTick(ctx)
+    return () => {
+      unwire()
+      setEngineCtx(null)
+      engineCtxRef.current = null
+    }
+  }, [activeProjectId, api, setNodes])
+
+  // Station add/delete and issue/edge changes both re-tick the engine; deleted stations also
+  // prune their edges and send stranded issues back to the Queue.
+  const stationSig = useMemo(
+    () => nodes.filter((n) => isPipelineKind(n.type)).map((n) => n.id).join('|'),
+    [nodes]
+  )
+  const pipeIssueSig = useProjects((s) => {
+    const p = s.projects.find((x) => x.id === s.activeProjectId)?.pipeline
+    return p ? p.issues.map((i) => `${i.id}@${i.atNodeId ?? ''}:${i.status}`).join('|') : ''
+  })
+  useEffect(() => {
+    const ctx = engineCtxRef.current
+    if (!ctx) return
+    prunePipeline(ctx)
+    scheduleTick(ctx)
+  }, [stationSig, pipeIssueSig, pipeEdgeSig])
+
+  // "Watch" on an agent station: opens a REAL terminal co-attached (via tmux) to the station's
+  // session — zero new machinery, and closing it never touches the station's work.
+  useEffect(() => {
+    const onWatch = (e: Event): void => {
+      const nodeId = (e as CustomEvent<{ nodeId?: string }>).detail?.nodeId
+      if (!nodeId) return
+      const src = nodesRef.current.find((n) => n.id === nodeId)
+      setNodes((ns) => {
+        const t = createTerminalNode(
+          ns.length,
+          undefined,
+          src
+            ? { x: src.position.x + ((src.width as number) ?? 340) + 60, y: src.position.y }
+            : undefined,
+          `tmux -L node-terminal attach -t =nt-${nodeId}`
+        )
+        t.data.title = `${(src?.data.title as string) ?? 'Station'} — terminal`
+        return [...ns, t]
+      })
+      markDirty()
+    }
+    window.addEventListener('nodeterm:watch-station', onWatch)
+    return () => window.removeEventListener('nodeterm:watch-station', onWatch)
+  }, [setNodes, markDirty])
+
   const addSticky = useCallback(
     (center?: { x: number; y: number }, groupId?: string) => {
       setNodes((ns) => {
@@ -3325,6 +3480,65 @@ export function Canvas() {
     },
     [setNodes, markDirty, emptyNodePos, parentInto]
   )
+
+  /** Pipeline stations are local-only in v1: the engine spawns their sessions without
+   *  `sshRemote`, so on an SSH project a station would become a LOCAL shell in the remote cwd —
+   *  the exact class the "a remote node is NEVER spawned locally" invariant forbids. Every
+   *  creation surface disables/omits on this reason; the engine refuses too (defense in depth). */
+  const stationSshReason = isSshProject
+    ? 'Pipeline stations are local-only in v1 — not available on SSH projects.'
+    : null
+
+  const addAgentStation = useCallback(
+    (center?: { x: number; y: number }) => {
+      if (isSshProject) return
+      const project = useProjects.getState().getProject(activeProjectId)
+      // Same account contract as addAgentNode: project default applies, resolved once here.
+      const account = resolveNewNodeAccount(
+        undefined,
+        project,
+        useSettings.getState().settings.claudeAccounts
+      )
+      setNodes((ns) => [
+        ...ns,
+        createAgentStationNode(
+          ns.filter((n) => n.type === 'agent').length,
+          'claude',
+          center ?? emptyNodePos(),
+          project?.cwd,
+          account
+        )
+      ])
+      markDirty()
+    },
+    [setNodes, markDirty, emptyNodePos, activeProjectId, isSshProject]
+  )
+
+  const addDecisionStation = useCallback(
+    (center?: { x: number; y: number }) => {
+      if (isSshProject) return
+      setNodes((ns) => [...ns, createDecisionNode(ns.filter((n) => n.type === 'decision').length, center ?? emptyNodePos())])
+      markDirty()
+    },
+    [setNodes, markDirty, emptyNodePos, isSshProject]
+  )
+
+  const addConnectorStation = useCallback(
+    (center?: { x: number; y: number }) => {
+      if (isSshProject) return
+      setNodes((ns) => [...ns, createConnectorNode(ns.filter((n) => n.type === 'connector').length, 'github', center ?? emptyNodePos())])
+      markDirty()
+    },
+    [setNodes, markDirty, emptyNodePos, isSshProject]
+  )
+
+  const addIssueViaPrompt = useCallback(async () => {
+    const ctx = engineCtxRef.current
+    if (!ctx) return
+    const title = await promptDialog({ message: 'New issue — one line describing the work:' })
+    if (!title?.trim()) return
+    pipelineAddIssue(ctx, { title: title.trim() })
+  }, [])
 
   const addDino = useCallback(
     (center?: { x: number; y: number }) => {
@@ -3717,6 +3931,14 @@ export function Canvas() {
         if (n.type === 'terminal')
           disposeTerminalOnUnmount(sessionForProject(useProjects.getState().activeProjectId ?? '').id, n.id)
         if (n.type === 'terminal') transport.destroy(n.id)
+        // Agent stations spawn engine-owned sessions under the same persistKey = node id
+        // contract; a deleted station must end its session like a deleted terminal — and the
+        // engine's background client must let go FIRST, or the dead session stays attached
+        // (an attached session is invisible to the reaper). No-op for never-spawned stations.
+        if (n.type === 'agent') {
+          releaseStationClient(n.id)
+          transport.destroy(n.id)
+        }
         // Permanent deletion → drop the node's persisted agent status (sessionId/session/
         // unread/loop). Node unmount no longer does this, so deletion must. The loop card's
         // UI overrides live in agentNodes and are skipped by unmount's clearForParent.
@@ -3766,6 +3988,17 @@ export function Canvas() {
     },
     [setNodes, markDirty, refreshWorktreeStore, releaseWorktreeBinding]
   )
+
+  // Station × routes here (not React Flow's deleteElements) so the delete runs the full
+  // cleanup above: destroy the spawned session, release the engine's client, drop status.
+  useEffect(() => {
+    const onDelete = (e: Event): void => {
+      const nodeId = (e as CustomEvent<{ nodeId?: string }>).detail?.nodeId
+      if (nodeId) deleteNodes([nodeId])
+    }
+    window.addEventListener('nodeterm:delete-station', onDelete)
+    return () => window.removeEventListener('nodeterm:delete-station', onDelete)
+  }, [deleteNodes])
 
   // When an account is removed in Settings, patch the ACTIVE project's live nodes (the projects
   // store only holds the other projects' serialized copies). The account's login node is
@@ -5037,6 +5270,30 @@ export function Canvas() {
         : ([
             { label: 'Duplicate', icon: <IconDuplicate />, onClick: () => duplicateNodes(ids, at) }
           ] as MenuItem[])),
+      // Station kanban-column toggle: NOT under any hide-gate — `isHidden` only answers for ids
+      // in its inventory, and bundling this under 'duplicate' made hiding Duplicate silently
+      // take the toggle with it.
+      ...(ids.length === 1 && isPipelineKind(nodesRef.current.find((n) => n.id === ids[0])?.type)
+        ? ([
+            {
+              label:
+                nodesRef.current.find((n) => n.id === ids[0])?.data.kanbanColumn === false
+                  ? 'Add kanban column'
+                  : 'Remove kanban column',
+              icon: <IconDuplicate />,
+              onClick: () => {
+                setNodes((ns) =>
+                  ns.map((n) =>
+                    n.id === ids[0]
+                      ? { ...n, data: { ...n.data, kanbanColumn: n.data.kanbanColumn === false } }
+                      : n
+                  )
+                )
+                markDirty()
+              }
+            }
+          ] as MenuItem[])
+        : []),
       ...(ids.length === 1 && (() => {
         const a = agentIdOf(ids[0])
         return !!a && canBranch(a)
@@ -5302,6 +5559,10 @@ export function Canvas() {
           onClick: () => addTerminal(at, undefined, groupId)
         },
         ...agentCreationItems(at, groupId),
+        { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+        { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+        { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+        { label: 'New issue…', icon: <IconNote />, onClick: () => void addIssueViaPrompt() },
         { label: 'New sticky note', icon: <IconNote />, onClick: () => addSticky(at, groupId) },
         { type: 'separator' },
         ...(isHidden('colors', useSettings.getState().settings.hiddenNodeMenuItems)
@@ -5403,6 +5664,10 @@ export function Canvas() {
           { type: 'separator' },
           // Content nodes.
           { label: 'New browser', icon: <IconRemote />, onClick: () => addBrowser(at) },
+          { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+          { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+          { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+          { label: 'New issue…', icon: <IconNote />, onClick: () => void addIssueViaPrompt() },
           { label: 'New sticky note', icon: <IconNote />, onClick: () => addSticky(at) },
           { label: 'New dino game', icon: <IconDino />, onClick: () => addDino(at) },
           { label: 'Open file…', icon: <IconEditor />, onClick: () => void openFileDialog(at) },
@@ -7064,6 +7329,7 @@ export function Canvas() {
             deleteNodes([id])
           } else {
             disposeTerminalOnUnmount(sessionForProject(projectId).id, id) // node may be parked from the project switch
+            releaseStationClient(id) // agent stations only; no-op for everything else
             transport.destroy(id)
             useAgentStatus.getState().remove(id)
             useProjects.getState().removeNode(projectId, id)
@@ -8008,6 +8274,11 @@ export function Canvas() {
           disposeTerminalOnUnmount(sessionForProject(id).id, n.id) // may be parked from a recent switch away
           transport.destroy(n.id)
         }
+        // Agent stations run engine-spawned sessions under the same persistKey contract.
+        if (n.kind === 'agent') {
+          releaseStationClient(n.id)
+          transport.destroy(n.id)
+        }
         useAgentStatus.getState().remove(n.id)
       })
       // SSH project: the per-node `transport.destroy` above only ends the REMOTE session for
@@ -8087,6 +8358,16 @@ export function Canvas() {
             run: () => addAgentNode('claude', undefined, undefined, a.id)
           })
         ),
+      // Omitted (not disabled) on SSH projects — the palette surfaces every row as a search
+      // result, so a disabled entry would read as broken (the sshAccountsHint rule).
+      ...(stationSshReason
+        ? []
+        : [
+            { id: 'new-station', label: 'New agent station', icon: <IconNote />, run: () => addAgentStation() },
+            { id: 'new-decision', label: 'New decision station', icon: <IconNote />, run: () => addDecisionStation() },
+            { id: 'new-connector', label: 'New connector station', icon: <IconNote />, run: () => addConnectorStation() }
+          ]),
+      { id: 'new-issue', label: 'New issue (pipeline)', icon: <IconNote />, run: () => void addIssueViaPrompt() },
       { id: 'new-sticky', label: 'New sticky note', icon: <IconNote />, run: () => addSticky() },
       { id: 'new-dino', label: 'New dino game', icon: <IconDino />, run: () => addDino() },
       { id: 'open-file', label: 'Open file…', icon: <IconEditor />, run: () => void openFileDialog() },
@@ -9029,6 +9310,10 @@ export function Canvas() {
       )}
 
       <Dock
+        onAddStation={() => addAgentStation()}
+        onAddDecision={() => addDecisionStation()}
+        onAddConnector={() => addConnectorStation()}
+        stationsDisabledReason={stationSshReason}
         dirty={dirty}
         zoomPct={zoomPct}
         canUndo={pastRef.current.length > 0}

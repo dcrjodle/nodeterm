@@ -1,5 +1,5 @@
 import type { Node } from '@xyflow/react'
-import type { CanvasMutation, CanvasNodeState, ClaudeAccount, NodeKind, PendingLaunch, Project } from '@shared/types'
+import type { CanvasMutation, CanvasNodeState, ClaudeAccount, ConnectorService, DecisionRule, NodeKind, PendingLaunch, Project } from '@shared/types'
 import type { AgentId, AgentPermissionMode } from '@shared/agents/config'
 import { agentConfig, agentLaunchProgram, mintsSessionId, withSessionId } from '@shared/agents/config'
 import { withPermissionMode } from '@shared/agents/approval-mode'
@@ -28,6 +28,9 @@ export const NODE_COLORS = [
 
 const TERMINAL_SIZE = { width: 640, height: 440 }
 const STICKY_SIZE = { width: 240, height: 200 }
+const AGENT_STATION_SIZE = { width: 340, height: 330 }
+const DECISION_SIZE = { width: 320, height: 280 }
+const CONNECTOR_SIZE = { width: 300, height: 200 }
 const GROUP_SIZE = { width: 520, height: 360 }
 /** A fresh worktree group starts empty but exists to HOLD terminals/agents, and the default
  *  GROUP_SIZE (520×360) is smaller than a single terminal (600×400) — a dropped-in terminal would
@@ -124,6 +127,16 @@ export interface NodeData {
    * SSH-project editor still routes to the remote fs after reopen.
    */
   sshFs?: boolean
+  // pipeline stations (kind agent/decision/connector) — persisted, see shared/types.ts
+  assignment?: string
+  criteria?: string
+  rules?: DecisionRule[]
+  decisionMode?: 'auto' | 'manual'
+  service?: ConnectorService
+  authKind?: 'oauth-cli' | 'api-key'
+  envVar?: string
+  customLabel?: string
+  kanbanColumn?: boolean
   [key: string]: unknown
 }
 
@@ -677,6 +690,91 @@ export function createDinoNode(
       color: '#a2a2a2',
       group: null,
       highScore
+    }
+  }
+}
+
+/** Station colors match the Weave status hues: agent magenta, decision amber, connector green. */
+const STATION_COLORS = { agent: '#e05fa6', decision: '#e8a33d', connector: '#3ecf8e' } as const
+
+const CONNECTOR_LABELS: Record<ConnectorService, string> = {
+  github: 'GitHub',
+  slack: 'Slack',
+  gmail: 'Gmail',
+  custom: 'Connector'
+}
+
+/** Creates a pipeline AGENT station: a cli/assignment/sandbox card whose session the loop
+ *  engine spawns on demand (same persistKey = node id contract as terminal nodes). */
+export function createAgentStationNode(
+  index: number,
+  agentId: AgentId = 'claude',
+  center?: { x: number; y: number },
+  cwd?: string,
+  accountId?: string
+): CanvasNode {
+  return {
+    id: nextId('agent'),
+    type: 'agent',
+    position: placeAt(center, index, AGENT_STATION_SIZE.width, AGENT_STATION_SIZE.height),
+    width: AGENT_STATION_SIZE.width,
+    height: AGENT_STATION_SIZE.height,
+    style: { width: AGENT_STATION_SIZE.width, height: AGENT_STATION_SIZE.height },
+    data: {
+      title: `Agent ${index + 1}`,
+      color: STATION_COLORS.agent,
+      group: null,
+      agentId,
+      // Same rule as createAgentNode: the managed account is claude-only, resolved once here.
+      ...(accountId && agentId === 'claude' ? { accountId } : {}),
+      cwd,
+      assignment: '',
+      kanbanColumn: true
+    }
+  }
+}
+
+/** Creates a pipeline DECISION station (deterministic keyword routing; manual override). */
+export function createDecisionNode(index: number, center?: { x: number; y: number }): CanvasNode {
+  return {
+    id: nextId('decision'),
+    type: 'decision',
+    position: placeAt(center, index, DECISION_SIZE.width, DECISION_SIZE.height),
+    width: DECISION_SIZE.width,
+    height: DECISION_SIZE.height,
+    style: { width: DECISION_SIZE.width, height: DECISION_SIZE.height },
+    data: {
+      title: `Decision ${index + 1}`,
+      color: STATION_COLORS.decision,
+      group: null,
+      criteria: '',
+      rules: [],
+      decisionMode: 'auto',
+      kanbanColumn: true
+    }
+  }
+}
+
+/** Creates a pipeline CONNECTOR station (integration context; env var NAMES only, never values). */
+export function createConnectorNode(
+  index: number,
+  service: ConnectorService = 'github',
+  center?: { x: number; y: number }
+): CanvasNode {
+  return {
+    id: nextId('connector'),
+    type: 'connector',
+    position: placeAt(center, index, CONNECTOR_SIZE.width, CONNECTOR_SIZE.height),
+    width: CONNECTOR_SIZE.width,
+    height: CONNECTOR_SIZE.height,
+    style: { width: CONNECTOR_SIZE.width, height: CONNECTOR_SIZE.height },
+    data: {
+      title: CONNECTOR_LABELS[service],
+      color: STATION_COLORS.connector,
+      group: null,
+      service,
+      authKind: service === 'custom' ? 'api-key' : 'oauth-cli',
+      kanbanColumn: true
     }
   }
 }
@@ -1272,7 +1370,16 @@ export function nodeStatesToFlow(states: CanvasNodeState[]): CanvasNode[] {
         ssh: n.ssh,
         sshRemoteTmux: n.sshRemoteTmux,
         sshFs: n.sshFs,
-        worktree: n.worktree
+        worktree: n.worktree,
+        assignment: n.assignment,
+        criteria: n.criteria,
+        rules: n.rules,
+        decisionMode: n.decisionMode,
+        service: n.service,
+        authKind: n.authKind,
+        envVar: n.envVar,
+        customLabel: n.customLabel,
+        kanbanColumn: n.kanbanColumn
       }
     }
   })
@@ -1298,7 +1405,13 @@ export function flowToNodeStates(nodes: CanvasNode[]): CanvasNodeState[] {
                   ? WEB_SIZE
                   : kind === 'dino'
                     ? DINO_SIZE
-                    : TERMINAL_SIZE
+                    : kind === 'agent'
+                      ? AGENT_STATION_SIZE
+                      : kind === 'decision'
+                        ? DECISION_SIZE
+                        : kind === 'connector'
+                          ? CONNECTOR_SIZE
+                          : TERMINAL_SIZE
   return nodes
     .map((n) => {
       const kind: NodeKind = (n.type as NodeKind) ?? 'terminal'
@@ -1337,7 +1450,16 @@ export function flowToNodeStates(nodes: CanvasNode[]): CanvasNodeState[] {
         ssh: n.data.ssh,
         sshRemoteTmux: n.data.sshRemoteTmux,
         sshFs: n.data.sshFs,
-        worktree: n.data.worktree
+        worktree: n.data.worktree,
+        assignment: n.data.assignment,
+        criteria: n.data.criteria,
+        rules: n.data.rules,
+        decisionMode: n.data.decisionMode,
+        service: n.data.service,
+        authKind: n.data.authKind,
+        envVar: n.data.envVar,
+        customLabel: n.data.customLabel,
+        kanbanColumn: n.data.kanbanColumn
       }
     })
 }

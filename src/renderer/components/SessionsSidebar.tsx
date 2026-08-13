@@ -16,6 +16,8 @@ import {
 import { SessionRow } from './SessionRow'
 import { IconBellFilled, IconCircleCheck, IconPin } from './icons'
 import { useProjects } from '../state/projects'
+import { chainOrder, stationsOf } from '../lib/pipeline'
+import type { AgentState } from '@shared/agents/normalize'
 import { useSettings } from '../state/settings'
 import { useAgentStatus } from '../state/agentStatus'
 import { useSessionNaming } from '../state/sessionNaming'
@@ -58,6 +60,54 @@ export interface SessionsSidebarProps {
   onReorderProject(draggedId: string, beforeId: string | null): void
   onMouseEnter?(): void
   onMouseLeave?(): void
+}
+
+const STATION_GLYPHS: Record<string, string> = { agent: '▣', decision: '◇', connector: '⬡' }
+
+/** The project's pipeline chain, in chain order: one chip per station with its live agent
+ *  state and how many issues sit at it. Reads the STORE (serialized nodes), so an active
+ *  project's brand-new station appears after the debounced commit — same freshness as tabs. */
+function PipelineStrip({
+  projectId,
+  statusById,
+  onFocusNode
+}: {
+  projectId: string
+  statusById: Record<string, { state?: AgentState } | undefined>
+  onFocusNode(id: string): void
+}): JSX.Element | null {
+  const project = useProjects((s) => s.projects.find((x) => x.id === projectId))
+  if (!project) return null
+  const stations = stationsOf(project.nodes)
+  if (!stations.length) return null
+  const chain = chainOrder(stations, project.pipeline?.edges ?? [])
+  const issues = project.pipeline?.issues ?? []
+  const countAt = (id: string): number =>
+    issues.filter((i) => i.atNodeId === id && i.status !== 'done').length
+  return (
+    <div className="ss-pipeline" title="Pipeline — the project's loop, in chain order">
+      {chain.map((st, i) => {
+        const state = statusById[st.id]?.state
+        const n = countAt(st.id)
+        return (
+          <span key={st.id} className="ss-pipeline__seg">
+            {i > 0 && <span className="ss-pipeline__arrow">→</span>}
+            <button
+              className={`ss-pipeline__chip${state === 'working' ? ' is-working' : ''}${
+                state === 'waiting' || state === 'blocked' ? ' is-blocked' : ''
+              }`}
+              onClick={() => onFocusNode(st.id)}
+              title={`${st.title} — ${st.kind}${n ? ` · ${n} issue${n > 1 ? 's' : ''}` : ''}`}
+            >
+              <span className="ss-pipeline__glyph">{STATION_GLYPHS[st.kind]}</span>
+              <span className="ss-pipeline__name">{st.title}</span>
+              {n > 0 && <span className="ss-pipeline__count">{n}</span>}
+            </button>
+          </span>
+        )
+      })}
+    </div>
+  )
 }
 
 export function SessionsSidebar(props: SessionsSidebarProps): JSX.Element | null {
@@ -546,6 +596,11 @@ export function SessionsSidebar(props: SessionsSidebarProps): JSX.Element | null
               </div>
               {!isCollapsed && (
                 <>
+                  <PipelineStrip
+                    projectId={g.projectId}
+                    statusById={statusById}
+                    onFocusNode={props.onFocusNode}
+                  />
                   {g.groups.map((bucket) => renderBucket(g.projectId, g.cwd, bucket, null))}
                   {g.groups.length > 0 && (
                     <div

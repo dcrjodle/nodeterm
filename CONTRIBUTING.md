@@ -110,6 +110,26 @@ Where a behaviour can only be verified on hardware we do not have in CI (a Mac, 
 GPU), say so explicitly rather than implying coverage. Several docs carry numbered device
 checklists for exactly this.
 
+## Loop-factory pipeline — the short rules
+
+- Routing/topology/prompt logic goes in `renderer/lib/pipeline.ts` (pure, tested); side
+  effects (timers, pty clients, subscriptions) only in `renderer/state/pipeline.ts`.
+- `Project.pipeline` persists like `kanban`: spread it through `projectToFile`/`fileToProject`
+  and guard with `validPipeline` on every load path you add.
+- Issue advance is hook-driven (working→done AFTER injection). Never advance on a bare `done`,
+  never scrape terminal output to decide.
+- The pipeline's kanban columns are DERIVED from the stations at render time — do not persist
+  them into `project.kanban`.
+- Connector stations store env var NAMES only. A secret value in project.json or a composed
+  prompt is a bug, full stop.
+- Never inject a prompt into a pane a SHELL owns — a multi-line prompt typed at a shell
+  executes line by line. Verify the pane (status or `paneCommand`) before `sendText`.
+- An issue's `active` status is engine-held; the holds are in-memory. Any new path that sets
+  `active` must either hold it or be covered by the tick's self-heal (orphaned active → queued).
+- Deleting an agent station must release the engine's client AND destroy its tmux session
+  (route through Canvas `deleteNodes`, never React Flow's `deleteElements`).
+- Stations are local-only in v1 — disable creation with the reason on SSH projects, don't hide it.
+
 ## Pull requests
 
 - Branch from `main`. CI runs `quality`, `CodeQL` and `Dependency review`; all three are required.

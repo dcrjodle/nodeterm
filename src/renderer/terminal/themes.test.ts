@@ -62,16 +62,17 @@ describe('TERMINAL_THEMES', () => {
   })
 })
 
-describe('the default theme reproduces the pre-themes appearance', () => {
-  // LOAD-BEARING. Before themes, both call sites hardcoded these two colours and let xterm fill
-  // in the rest from its own (Tango) palette. Anyone who never picks a theme must keep seeing
-  // exactly that — an update is not allowed to repaint their terminals. Changing these values
-  // means deciding to do that on purpose.
+describe('the default theme reproduces the Weave appearance', () => {
+  // LOAD-BEARING. The default theme's background IS the app palette's node-card surface
+  // (`--surface-deep`), so an untouched install renders terminals flush with their card chrome.
+  // The Weave re-theme (2026-08) changed these values ON PURPOSE — the pre-themes #1e1e1e pair
+  // was retired with the macOS palette. Changing them again means deciding to repaint every
+  // terminal of every user who never picked a theme.
   const d = resolveTerminalTheme(DEFAULT_TERMINAL_THEME_ID).theme
 
-  it('keeps the hardcoded background and foreground', () => {
-    expect(d.background).toBe('#1e1e1e')
-    expect(d.foreground).toBe('#e6e6e6')
+  it('keeps the background and foreground in step with the Weave palette', () => {
+    expect(d.background).toBe('#161618')
+    expect(d.foreground).toBe('#ececee')
   })
 
   it("keeps xterm's own default ANSI palette", () => {

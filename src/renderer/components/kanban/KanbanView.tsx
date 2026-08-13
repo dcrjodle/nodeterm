@@ -19,6 +19,7 @@ import { IconAgent, IconExternal, IconNote, IconSwitch, IconTerminal, IconTrash,
 import type { GitHubIssueCardView } from '@shared/github-issues'
 import { useGitHubIssues } from '../../state/githubIssues'
 import { useSession } from '../../session/session'
+import { PipelineBoard } from './PipelineBoard'
 import { KanbanSourceFilter, type KanbanSource } from './KanbanSourceFilter'
 import { GitHubIssueSummaryModal } from './GitHubIssueSummaryModal'
 import { ConfirmDialog } from '../ConfirmDialog'
@@ -467,6 +468,7 @@ export const KanbanView = memo(function KanbanView({
         )}
       </div>
       <div className="kanban-board">
+        <PipelineBoard onFocusNode={onOpenNode} />
         <div className="kanban-board__columns">
           <KanbanColumn
             column={null}

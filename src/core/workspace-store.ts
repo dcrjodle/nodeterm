@@ -9,7 +9,7 @@ import {
 } from '../shared/types'
 import {
   PROJECT_DIR, PROJECT_FILE, fileToProject, projectToFile, resolveNodes, sameProjectContent,
-  serializeProjectFile, splitWorkspace, validKanban,
+  serializeProjectFile, splitWorkspace, validKanban, validPipeline,
   type IndexEntryV3, type ProjectFileV1, type WorkspaceIndexV3
 } from './workspace-files'
 import { hoistLegacyNodeExec, type LocalNodeExecMap } from '../shared/node-exec'
@@ -203,9 +203,14 @@ export class WorkspaceStore {
     for (const e of index.entries) {
       if (e.project) {
         // Inline projects are stored verbatim in the index (no fileToProject pass), so apply the
-        // same kanban shape guard here — a v1/hand-edited board would otherwise crash the render.
-        const { kanban, ...rest } = e.project
-        projects.push(validKanban(kanban) ? e.project : rest)
+        // same kanban/pipeline shape guards here — a v1/hand-edited board would otherwise crash
+        // the render.
+        const { kanban, pipeline, ...rest } = e.project
+        projects.push({
+          ...rest,
+          ...(validKanban(kanban) ? { kanban } : {}),
+          ...(validPipeline(pipeline) ? { pipeline } : {})
+        })
       } else if (e.cwd) {
         if (sideline) await sweepStaleTmp(projectFilePath(e.cwd))
         const read = await this.readProjectFile(e.cwd, sideline)

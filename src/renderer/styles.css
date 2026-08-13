@@ -17,46 +17,50 @@
      (A white that sits on a saturated ACCENT fill is a different thing and stays `#fff`.) */
   --text-strong: #fff;
 
-  /* Working (agent mid-turn) accent: the clay spinner/glow color, shared by every "working"
-     indicator (node glow, sidebar dot, project-header badge) so it only has to be edited once. */
-  --agent-working: #d97757;
+  /* Working (agent mid-turn) accent: shared by every "working" indicator (node glow, sidebar
+     dot, project-header badge) so it only has to be edited once. Weave green. */
+  --agent-working: #3ecf8e;
 
-  --bg: #1e1e1e; /* content / canvas / terminal (controlBackground) */
-  --panel: #282828; /* bars, panels, node chrome (underPage) */
-  --panel-header: #323232; /* elevated / hover (windowBackground) */
-  --panel-2: #323232;
+  --bg: #161618; /* content / terminal — Weave card surface */
+  --panel: #1e1e21; /* bars, panels, node chrome — Weave inset surface */
+  --panel-header: #26262a; /* elevated / hover */
+  --panel-2: #26262a;
   /* Surfaces that were spelled as one-off hexes all over the sheet — nine slightly different
      darks, which was already drift before a second theme existed. Named by ELEVATION, so the light
      palette can invert the ramp instead of guessing what each hex meant. */
   --surface-black: #0a0a0c; /* the onboarding scenes' near-black backdrop */
-  --surface-sunken: #141416; /* below the page: wells, empty states, code blocks */
-  --surface-deep: #1a1a1a; /* deepest chrome: dock, modal shells */
-  --surface-raised: #242424; /* above the panel: cards, popovers */
-  --surface-overlay: #2c2c2e; /* menus and floating layers */
-  --border: rgba(var(--tint-rgb), 0.1); /* separator */
-  --text: rgba(var(--tint-rgb), 0.85); /* label */
+  --surface-sunken: #121214; /* below the page: wells, empty states, code blocks */
+  --surface-deep: #161618; /* deepest chrome: dock, modal shells — the Weave card surface */
+  --surface-raised: #1e1e21; /* above the panel: cards, popovers */
+  --surface-overlay: #232327; /* menus and floating layers */
+  --border: rgba(var(--tint-rgb), 0.08); /* hairline separator */
+  --text: rgba(var(--tint-rgb), 0.92); /* label */
   --muted: rgba(var(--tint-rgb), 0.55); /* secondaryLabel */
   --muted-2: rgba(var(--tint-rgb), 0.25); /* tertiaryLabel */
-  --accent: #0a84ff; /* systemBlue */
-  --accent-hover: #3a9bff;
+  --accent: #e05fa6; /* Weave magenta — ports, edges, selection */
+  --accent-hover: #e97fb8;
   /* Accent as TEXT on a surface — lighter than the fill accent so it reads on a dark panel, and
      the light theme has to go the other way. Was `#6cb0ff`/`#a9c0ff` at ~14 hover/link sites. */
-  --accent-text: #6cb0ff;
+  --accent-text: #ef9ac6;
   /* Status hues, named so the light theme can darken them for a white field in one place. */
   --danger: #ff453a;
   --warn: #ff9f0a;
   --caution: #ffd60a;
-  --success: #32d74b;
+  --success: #3ecf8e;
+  /* Primary call-to-action button — Weave's white-on-dark pill ("Duplicate to My Files").
+     Inverts in light (dark ink button on cream). */
+  --btn-primary-bg: #ffffff;
+  --btn-primary-fg: #131316;
 
   /* THE CANVAS. Deliberately blacker than `--bg` in dark — the nodes are the content and the
      field behind them recedes. In light it has to go the other way, off-white and slightly
      greyer than a node, or the nodes lose their edges. */
-  --canvas-bg: #000000;
+  --canvas-bg: #0d0d0f;
   /* Floating surfaces, each written as a triple so every per-use alpha survives (same idea as
      --tint-rgb). Menus/dock/banners, popovers, and cards sit at three different depths. */
-  --menu-rgb: 40, 40, 42;
-  --popover-rgb: 20, 20, 22;
-  --card-rgb: 28, 28, 30;
+  --menu-rgb: 32, 32, 36;
+  --popover-rgb: 22, 22, 25;
+  --card-rgb: 24, 24, 27;
   /* Drop-shadow weight multiplier. A shadow is black in BOTH themes — what changes is how hard it
      may land: 0.55 black reads as depth over a dark field and as mud over a white one. Every
      box-shadow alpha is multiplied by this, so the light theme turns them all down at once
@@ -64,7 +68,7 @@
   --shadow-k: 1;
 
   /* Canvas chrome that lives on React Flow props rather than in a rule. */
-  --canvas-dot: #4a4a4a;
+  --canvas-dot: #303036;
   --minimap-mask: rgba(10, 12, 18, 0.6);
   --git-graph-ref: var(--accent);
   --git-graph-remote-ref: #bf5af2;
@@ -74,11 +78,11 @@
   --git-graph-lane-3: #6ac4dc;
   --git-graph-lane-4: #ff453a;
   --git-graph-lane-5: #ac8e68;
-  --radius: 8px;
-  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-sm: 8px;
   --radius-lg: 12px;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro', 'Helvetica Neue',
-    sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro',
+    'Helvetica Neue', sans-serif;
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
   /* Tells the engine which way its OWN chrome should go — scrollbars, form controls, the
@@ -129,14 +133,16 @@
   --surface-raised: #fdfbf7; /* …while raised surfaces come up, but never to pure white */
   --surface-overlay: #fdfbf7;
 
-  /* systemBlue's light-mode value — the dark one is deliberately lighter for a dark field and
-     loses contrast against a pale one. Kept BLUE on a warm field: the accent is the product's
-     identity across both themes and is user-configurable (Settings → Appearance), so it is not
-     the palette's job to change it. */
-  --accent: #007aff;
-  --accent-hover: #0a6ed1;
-  /* Accent as text has to DARKEN here, where the dark theme's lightened blue disappears. */
-  --accent-text: #0060df;
+  /* Weave magenta, darkened for a pale field — the dark theme's value is tuned for a dark
+     canvas and loses contrast against cream. The accent is the product's identity across both
+     themes, so the hue stays; only its weight changes. */
+  --accent: #b3407f;
+  --accent-hover: #9a2f6a;
+  /* Accent as text has to DARKEN here, where the dark theme's lightened magenta disappears. */
+  --accent-text: #8e2f66;
+  /* Primary button inverts: dark ink pill on cream. */
+  --btn-primary-bg: #2b241c;
+  --btn-primary-fg: #fdfbf7;
 
   /* The canvas sits BELOW every node, so it is the one surface that must be darker than the
      panels — otherwise the nodes dissolve into the field and the layout loses its edges. */
@@ -155,11 +161,10 @@
   --warn: #a85c00;
   --caution: #806100;
   --success: #1f7a38;
-  /* Same story for the working clay: #d97757 is tuned for a dark field and measures 2.7:1 against
-     these surfaces — under this palette's 4.3 floor, and it is rendered as TEXT (the badge count),
-     not just a dot. Darkened at the same hue (15°) into the band the other status hues occupy,
-     so "working" still reads as the same colour in both themes. */
-  --agent-working: #b04a28;
+  /* Same story for the working green: #3ecf8e is tuned for a dark field and falls under this
+     palette's 4.3 floor as TEXT (the badge count). Darkened at the same hue into the band the
+     other status hues occupy, so "working" still reads as the same colour in both themes. */
+  --agent-working: #17714a;
 
   /* Dots must read as a grid, not as noise: the dark-mode grey is far too heavy on a pale field,
      and a neutral one would be the only cold thing on screen. */
@@ -199,8 +204,9 @@ body,
   height: 44px;
   /* Leave room for the macOS traffic lights on the left. */
   padding: 0 12px 0 86px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  /* Weave: the bar shares the canvas field; the tab pill group floats on it. */
+  background: var(--canvas-bg);
+  border-bottom: 1px solid transparent;
   /* Above the canvas and the menu backdrop so tabs/inputs stay interactive. */
   z-index: 30;
   flex-shrink: 0;
@@ -552,12 +558,12 @@ body,
 }
 
 .dock-add.active {
-  background: #0060df;
+  background: var(--accent-hover);
   color: #fff;
 }
 
 .dock-btn.active {
-  background: rgba(10, 132, 255, 0.22);
+  background: rgba(224, 95, 166, 0.22);
   color: var(--accent-hover);
 }
 
@@ -865,7 +871,7 @@ body,
   flex-shrink: 0;
   background: transparent;
   border: none;
-  color: #0a84ff;
+  color: #e05fa6;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -993,12 +999,12 @@ body,
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
+  background: var(--surface-deep);
   border: 1px solid var(--border);
-  border-top-width: 3px;
-  border-radius: 10px;
+  border-top-width: 2px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, calc(0.4 * var(--shadow-k)));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, calc(0.3 * var(--shadow-k)));
 }
 
 .term-node.selected {
@@ -1015,8 +1021,8 @@ body,
 .term-node.unread {
   border-color: var(--accent);
   box-shadow:
-    0 0 0 1px rgba(10, 132, 255, 0.5),
-    0 0 16px 1px rgba(10, 132, 255, 0.35),
+    0 0 0 1px rgba(224, 95, 166, 0.5),
+    0 0 16px 1px rgba(224, 95, 166, 0.35),
     0 8px 28px rgba(0, 0, 0, calc(0.4 * var(--shadow-k)));
 }
 
@@ -1028,8 +1034,8 @@ body,
   pointer-events: none;
   z-index: -1;
   box-shadow:
-    0 0 0 1px rgba(10, 132, 255, 0.8),
-    0 0 26px 4px rgba(10, 132, 255, 0.6);
+    0 0 0 1px rgba(224, 95, 166, 0.8),
+    0 0 26px 4px rgba(224, 95, 166, 0.6);
   opacity: 0;
   animation: nt-unread-glow 2s ease-in-out infinite;
   will-change: opacity;
@@ -1045,15 +1051,15 @@ body,
   }
 }
 
-/* Working (agent mid-turn): a soft clay glow — the spinner's #d97757 — behind the node.
+/* Working (agent mid-turn): a soft clay glow — the spinner's #3ecf8e — behind the node.
    Same opacity-pulse-on-wrapper-pseudo technique as the unread glow above (never animate
    box-shadow), but calmer: lower intensity, slower cycle, and it never fully disappears so
    the node reads "alive" rather than "blinking". Mutually exclusive with .unread (isUnread
    is false while working). Shadows only — the top border keeps the node's own color. */
 .term-node.working {
   box-shadow:
-    0 0 0 1px rgba(217, 119, 87, 0.35),
-    0 0 14px 1px rgba(217, 119, 87, 0.22),
+    0 0 0 1px rgba(62, 207, 142, 0.35),
+    0 0 14px 1px rgba(62, 207, 142, 0.22),
     0 8px 28px rgba(0, 0, 0, calc(0.4 * var(--shadow-k)));
 }
 
@@ -1065,8 +1071,8 @@ body,
   pointer-events: none;
   z-index: -1;
   box-shadow:
-    0 0 0 1px rgba(217, 119, 87, 0.45),
-    0 0 22px 3px rgba(217, 119, 87, 0.35);
+    0 0 0 1px rgba(62, 207, 142, 0.45),
+    0 0 22px 3px rgba(62, 207, 142, 0.35);
   opacity: 0.25;
   animation: nt-working-glow 2.6s ease-in-out infinite;
   will-change: opacity;
@@ -1269,7 +1275,7 @@ body,
   white-space: nowrap;
   font-size: 11px;
   color: var(--muted);
-  background: rgba(10, 132, 255, 0.14);
+  background: rgba(224, 95, 166, 0.14);
   border-radius: 6px;
 }
 
@@ -1299,9 +1305,9 @@ body,
   background: currentColor;
 }
 
-/* RUNNING matches the working spinner + node glow (clay #d97757), not the base green. */
+/* RUNNING matches the working spinner + node glow (clay #3ecf8e), not the base green. */
 .term-node__status--busy {
-  color: #d97757;
+  color: #3ecf8e;
 }
 
 .term-node__status--busy .term-node__status-dot {
@@ -1536,7 +1542,7 @@ body,
 }
 
 .term-node__ai:hover:not(:disabled) {
-  background: rgba(10, 132, 255, 0.18);
+  background: rgba(224, 95, 166, 0.18);
   color: var(--accent-text);
 }
 
@@ -1558,7 +1564,7 @@ body,
 }
 
 .term-node__move-worktree:hover {
-  background: rgba(10, 132, 255, 0.18);
+  background: rgba(224, 95, 166, 0.18);
   color: var(--accent-text);
 }
 
@@ -1576,7 +1582,7 @@ body,
 }
 
 .term-node__search:hover {
-  background: rgba(10, 132, 255, 0.18);
+  background: rgba(224, 95, 166, 0.18);
   color: var(--accent-text);
 }
 
@@ -1594,7 +1600,7 @@ body,
 }
 
 .term-node__refresh:hover {
-  background: rgba(10, 132, 255, 0.18);
+  background: rgba(224, 95, 166, 0.18);
   color: var(--accent-text);
 }
 
@@ -1612,7 +1618,7 @@ body,
 }
 
 .term-node__mic:hover {
-  background: rgba(10, 132, 255, 0.18);
+  background: rgba(224, 95, 166, 0.18);
   color: var(--accent-text);
 }
 
@@ -1630,7 +1636,7 @@ body,
 }
 
 .term-node__chat:hover {
-  background: rgba(10, 132, 255, 0.18);
+  background: rgba(224, 95, 166, 0.18);
   color: var(--accent-text);
 }
 
@@ -1685,7 +1691,7 @@ body,
 }
 
 .term-node__find-btn:hover:not(:disabled) {
-  background: rgba(10, 132, 255, 0.18);
+  background: rgba(224, 95, 166, 0.18);
   color: var(--accent-text);
 }
 
@@ -1722,7 +1728,7 @@ body,
 }
 
 .term-node__find-tag--claude {
-  background: rgba(10, 132, 255, 0.22);
+  background: rgba(224, 95, 166, 0.22);
   color: var(--accent-text);
 }
 
@@ -2231,7 +2237,7 @@ body,
 }
 .term-chat__msg--user {
   align-self: flex-end;
-  background: var(--accent, #0a84ff);
+  background: var(--accent, #e05fa6);
   color: #fff;
 }
 .term-chat__msg--assistant {
@@ -2271,7 +2277,7 @@ body,
 }
 .term-chat__tool-name {
   font-weight: 600;
-  color: var(--accent, #0a84ff);
+  color: var(--accent, #e05fa6);
 }
 .term-chat__tool-arg {
   overflow: hidden;
@@ -2306,7 +2312,7 @@ body,
 }
 .term-chat__input:focus {
   outline: none;
-  border-color: var(--accent, #0a84ff);
+  border-color: var(--accent, #e05fa6);
 }
 .term-chat__input:disabled {
   opacity: 0.5;
@@ -3145,7 +3151,7 @@ body,
   height: 8px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25);
+  box-shadow: 0 0 0 3px rgba(224, 95, 166, 0.25);
 }
 
 .set-value {
@@ -3280,7 +3286,7 @@ body,
 }
 
 .announce-banner__btn:hover {
-  background: rgba(10, 132, 255, 0.12);
+  background: rgba(224, 95, 166, 0.12);
 }
 
 .announce-banner__close {
@@ -3939,7 +3945,7 @@ body,
 
 .scm-message:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(224, 95, 166, 0.18);
 }
 
 .scm-gen {
@@ -3951,8 +3957,8 @@ body,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 132, 255, 0.14);
-  border: 1px solid rgba(10, 132, 255, 0.32);
+  background: rgba(224, 95, 166, 0.14);
+  border: 1px solid rgba(224, 95, 166, 0.32);
   color: var(--accent-text);
   border-radius: 7px;
   font-size: 13px;
@@ -3962,7 +3968,7 @@ body,
 }
 
 .scm-gen:hover:not(:disabled) {
-  background: rgba(10, 132, 255, 0.26);
+  background: rgba(224, 95, 166, 0.26);
 }
 
 .scm-gen:active:not(:disabled) {
@@ -4914,7 +4920,7 @@ body,
   flex-shrink: 0;
 }
 .palette__secondary:hover {
-  background: rgba(10, 132, 255, 0.18);
+  background: rgba(224, 95, 166, 0.18);
   color: var(--accent-text);
 }
 
@@ -5151,7 +5157,7 @@ body,
   padding: 10px 12px;
   background: var(--surface-deep);
   border: 1px solid var(--border);
-  border-left: 3px solid #d97757;
+  border-left: 3px solid #3ecf8e;
   border-radius: 10px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, calc(0.4 * var(--shadow-k)));
   font-size: 12px;
@@ -5208,7 +5214,7 @@ body,
   height: 8px;
   flex: none;
   border-radius: 50%;
-  background: #d97757;
+  background: #3ecf8e;
 }
 
 .subagent-node.working .subagent-node__dot {
@@ -5467,7 +5473,7 @@ body,
    minimap scale a node is a few pixels tall, so opacity alone reads as a faint flicker — the
    stroke THICKENS on the beat as well, which is what makes it findable on a busy map. */
 .minimap .mm-unread {
-  filter: drop-shadow(0 0 4px rgba(217, 119, 87, 0.95));
+  filter: drop-shadow(0 0 4px rgba(62, 207, 142, 0.95));
   animation: mm-pulse-unread 1.6s ease-in-out infinite;
 }
 @keyframes mm-pulse-unread {
@@ -5523,7 +5529,7 @@ body,
    currentColor, so the locked state tints via `color`. */
 .react-flow__controls-button.canvas-lock-btn.locked {
   color: var(--accent);
-  background: rgba(10, 132, 255, 0.14);
+  background: rgba(224, 95, 166, 0.14);
 }
 
 /* ---- Bottom-left pill cluster (usage + system resources) ----
@@ -5605,7 +5611,7 @@ body,
     gap 140ms ease;
 }
 .usage-pill:hover { background: rgba(44, 44, 46, 0.95); }
-.usage-pill__icon { color: #d97757; font-size: 13px; }
+.usage-pill__icon { color: #3ecf8e; font-size: 13px; }
 .usage-pill__minibar {
   display: inline-block;
   width: 42px;
@@ -6750,10 +6756,10 @@ body,
   padding: 1px 6px;
   border-radius: 5px;
 }
-/* RUNNING matches the working spinner + node glow (clay #d97757). */
+/* RUNNING matches the working spinner + node glow (clay #3ecf8e). */
 .chat-node__badge--working {
-  color: #d97757;
-  background: rgba(217, 119, 87, 0.15);
+  color: #3ecf8e;
+  background: rgba(62, 207, 142, 0.15);
   animation: nt-pulse 1.1s ease-in-out infinite;
 }
 /* NEEDS YOU is red everywhere (same as the terminal attention badge). */
@@ -6881,7 +6887,7 @@ body,
   padding: 10px;
   border-radius: 8px;
   background: rgba(var(--tint-rgb), 0.04);
-  border: 1px solid var(--accent, #0a84ff);
+  border: 1px solid var(--accent, #e05fa6);
 }
 .chat-node__permission-title {
   font-size: 12px;
@@ -7491,7 +7497,7 @@ body,
   border: none;
   padding: 0;
   font-size: 12px;
-  color: var(--accent, #0a84ff);
+  color: var(--accent, #e05fa6);
   cursor: pointer;
 }
 .phone-pair__footer { align-self: flex-start; }
@@ -7610,7 +7616,7 @@ body,
 /* Trello-style "this column will take the drop" state. */
 .kanban-col--drop {
   border-color: var(--accent);
-  background: rgba(10, 132, 255, 0.07);
+  background: rgba(224, 95, 166, 0.07);
   box-shadow: 0 0 0 1px var(--accent), 0 8px 24px rgba(0, 0, 0, calc(0.35 * var(--shadow-k)));
 }
 .kanban-col__header {
@@ -8032,7 +8038,7 @@ body,
 .kanban-add-col:hover {
   color: var(--text-strong);
   border-color: var(--accent);
-  background: rgba(10, 132, 255, 0.06);
+  background: rgba(224, 95, 166, 0.06);
 }
 
 
@@ -8085,7 +8091,7 @@ body,
 .kanban-col__new:hover {
   color: var(--text-strong);
   border-color: var(--accent);
-  background: rgba(10, 132, 255, 0.08);
+  background: rgba(224, 95, 166, 0.08);
 }
 /* GitHub Issues settings — the "Advanced" (token/provider) disclosure. Collapsed by default so the
    common gh-signed-in case shows no token noise. */
@@ -9041,6 +9047,750 @@ body,
   letter-spacing: 0.04em;
 }
 
+/* ---- Pipeline stations (agent / decision / connector) — the Weave loop-factory cards ---- */
+.station {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, calc(0.3 * var(--shadow-k)));
+  font-size: 12.5px;
+}
+
+.station.selected {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 8px 28px rgba(0, 0, 0, calc(0.3 * var(--shadow-k)));
+}
+
+.station__header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  min-height: 36px;
+}
+
+.station__glyph {
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.station__title {
+  color: var(--text);
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.station__title-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.station__state {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.station__state--working {
+  color: var(--success);
+}
+
+.station__state--waiting,
+.station__state--blocked {
+  color: var(--warn);
+}
+
+.station__close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+
+.station__header .station__close {
+  margin-left: 4px;
+}
+
+.station__close:hover {
+  color: var(--text);
+  background: var(--panel-header);
+}
+
+.station__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.station__block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.station__block--grow {
+  flex: 1;
+  min-height: 0;
+}
+
+.station__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.station__select,
+.station__rule-input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 8px;
+  outline: none;
+  min-width: 0;
+}
+
+.station__select:focus,
+.station__rule-input:focus,
+.station__text:focus {
+  border-color: var(--accent);
+}
+
+.station__text {
+  flex: 1;
+  min-height: 54px;
+  resize: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  padding: 7px 8px;
+  outline: none;
+}
+
+.station__text--short {
+  flex: none;
+  min-height: 38px;
+  max-height: 64px;
+}
+
+.station__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.station__row--wrap {
+  flex-wrap: wrap;
+}
+
+.station__path {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.station__btn {
+  background: var(--panel-header);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.station__btn:hover {
+  background: var(--surface-overlay);
+  border-color: rgba(var(--tint-rgb), 0.14);
+}
+
+.station__btn--add {
+  align-self: flex-start;
+}
+
+.station__btn--route {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: transparent;
+}
+
+.station__btn--route:hover {
+  background: rgba(232, 163, 61, 0.12);
+}
+
+.station__mode {
+  margin-left: auto;
+  display: inline-flex;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 1px;
+  gap: 1px;
+}
+
+.station__mode-btn {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.station__mode-btn.on {
+  background: var(--surface-overlay);
+  color: var(--text);
+}
+
+.station__rules {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.station__rule {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.station__rule-word {
+  color: var(--muted-2);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.station__rule-input {
+  flex: 1;
+  padding: 3px 7px;
+  font-size: 12px;
+}
+
+.station__rule-del {
+  background: none;
+  border: none;
+  color: var(--muted-2);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 3px;
+}
+
+.station__rule-del:hover {
+  color: var(--danger);
+}
+
+.station__hint {
+  color: var(--muted-2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.station__badges {
+  display: flex;
+  gap: 6px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.station__badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.station__badge--active {
+  color: var(--success);
+}
+
+.station__badge--waiting {
+  color: var(--warn);
+}
+
+.dock-menu__glyph {
+  width: 18px;
+  text-align: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.dock-menu__primary {
+  font-weight: 500;
+}
+
+/* Sessions sidebar: the per-project pipeline chain strip. */
+.ss-pipeline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 5px 10px 7px 26px;
+}
+
+.ss-pipeline__seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ss-pipeline__arrow {
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.ss-pipeline__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 130px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.ss-pipeline__chip:hover {
+  color: var(--text);
+  background: var(--panel-header);
+}
+
+.ss-pipeline__chip.is-working {
+  border-color: var(--success);
+}
+
+.ss-pipeline__chip.is-blocked {
+  border-color: var(--warn);
+}
+
+.ss-pipeline__glyph {
+  font-size: 10px;
+}
+
+.ss-pipeline__name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ss-pipeline__count {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 7px;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 0 5px;
+  line-height: 14px;
+}
+
+/* ---- Pipeline board strip (Queue -> stations -> Done) + issue cards ---- */
+.pipe-board {
+  padding: 0 18px 6px;
+}
+
+.pipe-board__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-2);
+  font-size: 11px;
+  padding: 2px 2px 8px;
+}
+
+.pipe-board__badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.pipe-board__columns {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.pipe-col {
+  flex: 0 0 232px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  min-height: 120px;
+  max-height: 42vh;
+}
+
+.pipe-col.is-drop {
+  border-color: var(--accent);
+}
+
+.pipe-col__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.pipe-col__glyph {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pipe-col__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pipe-col__count {
+  color: var(--muted-2);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.pipe-col__cards {
+  flex: 1;
+  min-height: 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.pipe-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.pipe-card:hover {
+  border-color: rgba(var(--tint-rgb), 0.16);
+}
+
+.pipe-card--active {
+  border-color: var(--success);
+}
+
+.pipe-card--waiting {
+  border-color: var(--warn);
+}
+
+.pipe-card__title {
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.pipe-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.pipe-card__status {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pipe-card__status--active {
+  color: var(--success);
+}
+
+.pipe-card__status--waiting {
+  color: var(--warn);
+}
+
+.pipe-card__spin {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: nt-unread-glow 1.6s ease-in-out infinite;
+}
+
+.pipe-card__hops {
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.pipe-col__add {
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  color: var(--muted-2);
+  font-size: 11.5px;
+  padding: 7px;
+  cursor: pointer;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.pipe-col__add:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+
+/* ---- Issue modal ---- */
+.issue-modal__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 56;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.issue-modal {
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(640px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, calc(0.5 * var(--shadow-k)));
+}
+
+.issue-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.issue-modal__title {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.issue-modal__close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.issue-modal__close:hover {
+  color: var(--text);
+  background: var(--panel-header);
+}
+
+.issue-modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.issue-modal__text {
+  min-height: 64px;
+  resize: vertical;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  padding: 7px 9px;
+  outline: none;
+  margin-bottom: 6px;
+}
+
+.issue-modal__text--notes {
+  min-height: 44px;
+}
+
+.issue-modal__text:focus {
+  border-color: var(--accent);
+}
+
+.issue-modal__routes {
+  margin-bottom: 6px;
+}
+
+.issue-modal__history {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.issue-modal__hop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.issue-modal__hop-name {
+  background: none;
+  border: none;
+  color: var(--accent-text);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+}
+
+.issue-modal__hop-time {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.issue-modal__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.issue-modal__delete {
+  margin-left: auto;
+  color: var(--danger);
+  border-color: transparent;
+  background: transparent;
+}
+
+.issue-modal__delete:hover {
+  background: rgba(229, 72, 77, 0.12);
+}
+
+/* Pipeline ports: the Weave ring look — dark core, colored 2px ring, grows on hover. */
+.pipe-handle.react-flow__handle {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--canvas-bg);
+  border: 2px solid var(--accent);
+  transition: transform 0.12s ease;
+}
+
+.pipe-handle.react-flow__handle:hover {
+  transform: scale(1.2);
+}
+
+.pipe-handle.react-flow__handle-left {
+  left: -7px;
+}
+
+.pipe-handle.react-flow__handle-right {
+  right: -7px;
+}
+
+.pipe-handle--alt.react-flow__handle {
+  border-color: var(--warn);
+  bottom: -7px;
+}
+
 /* ============================== Setup tour (onboarding) ==============================
    First-run flow: full-screen overlay, one animated scene + one decision per step.
    All motion is CSS keyframes (no deps); prefers-reduced-motion freezes every scene. */
@@ -9787,7 +10537,7 @@ body,
   flex: none;
 }
 .onb-mini:nth-child(odd) .onb-mini__dot {
-  background: #d97757;
+  background: #3ecf8e;
 }
 .onb-mini__bar {
   flex: 1;
@@ -9895,8 +10645,8 @@ body,
   margin-left: auto;
   font-size: 9px;
   font-weight: 600;
-  color: #0a84ff;
-  background: rgba(10, 132, 255, 0.18);
+  color: #e05fa6;
+  background: rgba(224, 95, 166, 0.18);
   border-radius: 4px;
   padding: 1px 5px;
 }
@@ -10135,7 +10885,7 @@ body,
   inset: 6px;
   border: 2px dashed var(--accent);
   border-radius: 8px;
-  background: rgba(10, 132, 255, 0.06);
+  background: rgba(224, 95, 166, 0.06);
   pointer-events: none;
   z-index: 3;
 }

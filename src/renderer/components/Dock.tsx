@@ -11,6 +11,12 @@ const isMac = /Mac/i.test(navigator.platform || navigator.userAgent)
 
 interface DockProps {
   dirty: boolean
+  onAddStation: () => void
+  onAddDecision: () => void
+  onAddConnector: () => void
+  /** When set, the three station rows render disabled with this reason (SSH projects — the
+   *  pipeline is local-only in v1). */
+  stationsDisabledReason?: string | null
   zoomPct: number
   canUndo: boolean
   canRedo: boolean
@@ -37,6 +43,10 @@ interface DockProps {
  */
 export function Dock({
   dirty,
+  onAddStation,
+  onAddDecision,
+  onAddConnector,
+  stationsDisabledReason,
   zoomPct,
   canUndo,
   canRedo,
@@ -84,6 +94,33 @@ export function Dock({
       <div className="dock">
         {menuOpen && (
           <div className="dock-menu">
+            <button
+              onClick={pick(onAddStation)}
+              className="dock-menu__primary"
+              disabled={!!stationsDisabledReason}
+              title={stationsDisabledReason ?? undefined}
+            >
+              <span className="dock-menu__glyph" style={{ color: '#e05fa6' }}>▣</span>
+              <span>Agent station</span>
+            </button>
+            <button
+              onClick={pick(onAddDecision)}
+              className="dock-menu__primary"
+              disabled={!!stationsDisabledReason}
+              title={stationsDisabledReason ?? undefined}
+            >
+              <span className="dock-menu__glyph" style={{ color: '#e8a33d' }}>◇</span>
+              <span>Decision</span>
+            </button>
+            <button
+              onClick={pick(onAddConnector)}
+              className="dock-menu__primary"
+              disabled={!!stationsDisabledReason}
+              title={stationsDisabledReason ?? undefined}
+            >
+              <span className="dock-menu__glyph" style={{ color: '#3ecf8e' }}>⬡</span>
+              <span>Connector</span>
+            </button>
             <button onClick={pick(onAddTerminal)}>
               <TerminalIcon />
               <span>Terminal</span>
