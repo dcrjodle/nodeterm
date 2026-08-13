@@ -587,32 +587,51 @@ per-project pipeline; ISSUES flow through it and mirror onto the kanban board. I
   exactly like `kanban` — spread in `projectToFile`/`fileToProject`, shape-guarded by
   `validPipeline` on EVERY load path (file refs AND `workspace-store`'s inline branch), so a
   mangled shape degrades to "no pipeline", never a render crash. Station config lives on
-  node `data` (assignment/rules/service/…, `kanbanColumn`), through both serializers.
+  node `data` (rules/service/…, `kanbanColumn`), through both serializers. An agent station's
+  ASSIGNMENT and SANDBOX are not fields on the station: they are SATELLITE node kinds
+  (`assignment` — text card, `sandbox` — folder card) wired into the station's top `cfg-in`
+  port; the `cfg-` edges persist beside the chain in `pipeline.edges` (prunePipeline keeps an
+  edge alive iff both endpoints are live stations OR satellites, and `liveEdges` keeps them out
+  of chain logic by construction — satellites are never stations).
 - **Pure/impure split**: ALL routing/topology/prompt logic is `renderer/lib/pipeline.ts`
   (unit-tested; chain order, decision resolution, column derivation, prompt composition —
   same issue + same config ⇒ byte-identical prompt). The engine (`renderer/state/pipeline.ts`)
   owns timers, station pty clients, and the one `agentStatus` subscription. Keep it that way.
 - **Engine contract**: STARTS issues on the ACTIVE project only (Canvas publishes `EngineCtx`;
-  `getStations` reads LIVE React Flow nodes — the single-source-of-truth rule). A station's
-  session uses **persistKey = node id**, the terminal-node contract, so tmux continuity, the
-  session-memory panel and co-attach all see it. Fresh sessions get the SAME composed launch
-  a new agent node gets (`createAgentNode` — session-id mint persisted back onto the node;
-  `accountId` resolved once at station creation via `resolveNewNodeAccount`, injected at
-  create AND passed to the composed launch); warm sessions only get a launch typed at them
-  when a SHELL owns the pane (`paneCommand`), never into a live CLI. Prompts inject via
-  `pty.sendText` (bracketed-paste aware) — but ONLY once the pane is verifiably not a shell:
+  `getStations`/`getSatellites` read LIVE React Flow nodes — the single-source-of-truth rule).
+  **An agent station IS a mounted terminal node** (TerminalNode renders type 'agent' with pipe
+  handles + issue badges + ▶ Start): the NODE owns the pty/xterm under **persistKey = node id**
+  — tmux continuity, parking, WebGL budget, the session-memory panel and co-attach all just
+  apply — and **the engine spawns nothing**. It only decides WHEN the Claude CLI is launched
+  into that pane (`ensureStationAgent`, serialized per station via `stationLaunches`, shared by
+  ▶ Start and the first arriving issue): a launch is TYPED via `pty.sendText` only when a SHELL
+  verifiably owns the pane. The launch resolves the CONNECTED satellites at that moment — `cd
+  '<sandbox cwd>' && …` (`prefixLaunchWithCd`, single-quoted: a cwd is user text on a shell
+  line) and the assignment as the CLI's initial prompt (`composeAssignmentPrompt`, quoted by
+  `createAgentNode`'s `shellSingleQuote` path — session-id mint persisted back onto the node,
+  `accountId` resolved once at creation). Resume-when-known wins (agentStatus sessionId, else
+  the node's minted `agentSessionId`): a resumed conversation already carries its assignment.
+  TerminalNode's own mount-time writes (initialCommand / cold-restore resume) are recorded in
+  `terminal/launch-ledger.ts`, and the engine DEFERS to a marked node — two launch lines at one
+  shell would feed the second into the fresh CLI as typed input. A station with NO session id
+  gets no cold-restore launch from TerminalNode (the engine owns the first launch, so the
+  satellites are honored); with one, the ordinary resume path runs. An assignment card
+  connected while the CLI is RUNNING is pushed once (`pushAssignmentToStation`, pane-guarded).
+  Issue prompts inject via `pty.sendText` — but ONLY once the pane is verifiably not a shell:
   a multi-line prompt typed at a shell EXECUTES line by line (the note-push rule), so
   `startAgentIssue` refuses (issue → `waiting` + note) when a shell owns the pane or the pane
   is unknown with no status ever seen. `waitForAgentUp` resolving is NOT proof — it times out.
-- **Stations are local-only in v1.** The engine spawns without `sshRemote`, so on an SSH
-  project a station would become a LOCAL shell in a remote cwd — the "a remote node is NEVER
-  spawned locally" class. Every creation surface disables (menus/dock, with the reason) or
-  omits (⌘K) on `stationSshReason`, and `startAgentIssue` refuses as the backstop.
+  **Agent stations always run Claude Code** (the per-station CLI picker was removed; a
+  persisted station is coerced in `stationOf` AND `nodeStatesToFlow`).
+- **Stations are local-only in v1.** A station's terminal spawns without `sshRemote`, so on an
+  SSH project it would become a LOCAL shell in a remote cwd — the "a remote node is NEVER
+  spawned locally" class. Every creation surface (stations AND satellites) disables (menus/dock,
+  with the reason) or omits (⌘K) on `stationSshReason`, and `startAgentIssue` refuses as the
+  backstop.
 - **Advance is hook-driven, gated on `sawWorking`**: an issue advances on the station's
   working→done transition observed AFTER its injection — a `done` that arrives without a
   `working` first is the PREVIOUS turn ending and must not advance anything. Agents without
-  hooks never auto-advance (manual Advance is the deterministic fallback; the station card
-  says so, and `ensureAgentSession` skips the status wait for them). The transition may land
+  hooks never auto-advance (manual Advance is the deterministic fallback). The transition may land
   while ANOTHER project is active (hooks POST by node id; tmux doesn't pause with the tab):
   the advance resolves the issue's OWNING project (`issueOwner` — live nodes for the active
   project, serialized store nodes otherwise) and writes THERE, never to the active pipeline.
@@ -620,12 +639,12 @@ per-project pipeline; ISSUES flow through it and mirror onto the kanban board. I
   dwell timers) — persisted `active` with no live holder (app restart, lost transition) would
   block its station forever, so the tick SELF-HEALS: an active head with no hold re-queues
   (a duplicate turn is visible and recoverable; a silently dead station is neither).
-- **Station delete owes the terminal-node teardown.** The station × routes through Canvas's
-  `deleteNodes` (a `nodeterm:delete-station` event — NOT React Flow's `deleteElements`, which
-  removes the card and leaves the session attached forever): `releaseStationClient` drops the
-  engine's background client FIRST (an attached session is invisible to the reaper), then
-  `transport.destroy` ends the tmux session. Project delete and the sessions-panel × do the
-  same.
+- **Station delete IS the terminal-node teardown.** The agent station's × is TerminalNode's ×
+  (`transport.destroy` + `deleteElements`); Canvas's `deleteNodes`, project delete and the
+  sessions-panel × additionally call `releaseStationHolds` (the engine's awaitTurn + launch
+  lock) and `disposeTerminalOnUnmount` so the unmount disposes instead of parking a dead pty.
+  Decision/connector cards still route their × through `nodeterm:delete-station` →
+  `deleteNodes`. The engine holds no clients anymore — there is nothing else to release.
 - **Loops are the point; `MAX_ISSUE_HOPS` (50) is the guard** — an issue over the limit goes
   `waiting` with a loop-limit note, never silently dropped, never spinning.
 - **Kanban mirror is DERIVED, never persisted**: `issueColumns` builds `Queue → chain → Done`

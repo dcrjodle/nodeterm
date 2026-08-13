@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { CanvasNodeState, PipelineEdge, PipelineIssue } from '@shared/types'
 import {
+  assignmentTextFor,
   chainOrder,
+  composeAssignmentPrompt,
   composeIssuePrompt,
   firstStation,
   issueColumnId,
@@ -10,9 +12,12 @@ import {
   newIssue,
   nextEdge,
   resolveDecision,
+  sandboxCwdFor,
+  satellitesOf,
   stationOf,
   stationsOf,
   upstreamConnectors,
+  type Satellite,
   type Station
 } from './pipeline'
 
@@ -215,11 +220,11 @@ describe('issue columns', () => {
 })
 
 describe('prompt composition', () => {
-  it('is deterministic and carries assignment + connector context, names only', () => {
+  it('is deterministic and carries connector context (names only) — never the assignment', () => {
     const stations = [
       station('gh', { kind: 'connector', service: 'github' }),
       station('slack', { kind: 'connector', service: 'slack', envVar: 'SLACK_TOKEN' }),
-      station('a', { assignment: 'Fix bugs. Never push to main.' })
+      station('a')
     ]
     const edges = [edge('gh', 'slack'), edge('slack', 'a')]
     const ups = upstreamConnectors('a', stations, edges)
@@ -227,10 +232,83 @@ describe('prompt composition', () => {
     const p1 = composeIssuePrompt(issueAt('a'), stations[2], ups)
     const p2 = composeIssuePrompt(issueAt('a'), stations[2], ups)
     expect(p1).toBe(p2)
-    expect(p1).toContain('Assignment: Fix bugs. Never push to main.')
+    // The assignment is delivered ONCE, when the station's CLI starts (composeAssignmentPrompt)
+    // — issue prompts stay lean.
+    expect(p1).not.toContain('Assignment')
     expect(p1).toContain('SLACK_TOKEN')
     expect(p1).toContain('never print its value')
     expect(p1).toContain('summarize what you did in one line')
+  })
+
+  it('composeAssignmentPrompt frames the text and stays empty for an empty assignment', () => {
+    expect(composeAssignmentPrompt('')).toBe('')
+    expect(composeAssignmentPrompt('   \n ')).toBe('')
+    const p = composeAssignmentPrompt('Fix bugs. Never push to main.')
+    expect(p).toContain('Standing assignment')
+    expect(p).toContain('Fix bugs. Never push to main.')
+  })
+})
+
+describe('satellites (assignment / sandbox config)', () => {
+  const sat = (id: string, over: Partial<Satellite> = {}): CanvasNodeState =>
+    ({
+      id,
+      kind: over.kind ?? 'assignment',
+      position: { x: 0, y: 0 },
+      size: { width: 1, height: 1 },
+      title: id,
+      color: '',
+      group: null,
+      text: over.text,
+      cwd: over.cwd
+    }) as CanvasNodeState
+
+  const cfg = (from: string, to: string): PipelineEdge => ({ id: `cfg-${from}-${to}`, from, to })
+
+  it('satellitesOf keeps only assignment/sandbox kinds', () => {
+    const nodes = [
+      sat('a1'),
+      sat('s1', { kind: 'sandbox', cwd: '/work' }),
+      { id: 't', kind: 'terminal', position: { x: 0, y: 0 }, size: { width: 1, height: 1 }, title: 't', color: '', group: null } as CanvasNodeState
+    ]
+    expect(satellitesOf(nodes).map((s) => s.id)).toEqual(['a1', 's1'])
+  })
+
+  it('sandboxCwdFor picks the connected sandbox and ignores blank/unconnected ones', () => {
+    const sats = satellitesOf([
+      sat('empty', { kind: 'sandbox', cwd: '  ' }),
+      sat('box', { kind: 'sandbox', cwd: '/work/repo' }),
+      sat('other', { kind: 'sandbox', cwd: '/elsewhere' })
+    ])
+    const edges = [cfg('empty', 'st'), cfg('box', 'st'), cfg('other', 'OTHER-STATION')]
+    expect(sandboxCwdFor('st', edges, sats)).toBe('/work/repo')
+    expect(sandboxCwdFor('st', [], sats)).toBeUndefined()
+  })
+
+  it('assignmentTextFor joins connected assignment cards in connect order', () => {
+    const sats = satellitesOf([
+      sat('a1', { text: 'First.' }),
+      sat('a2', { text: '  ' }),
+      sat('a3', { text: 'Second.' }),
+      sat('box', { kind: 'sandbox', cwd: '/x' })
+    ])
+    const edges = [cfg('a3', 'st'), cfg('a1', 'st'), cfg('a2', 'st'), cfg('box', 'st')]
+    expect(assignmentTextFor('st', edges, sats)).toBe('Second.\n\nFirst.')
+    expect(assignmentTextFor('st', [], sats)).toBe('')
+  })
+
+  it('stationOf coerces every agent station to claude (the CLI picker is gone)', () => {
+    const node = {
+      id: 'st',
+      kind: 'agent',
+      position: { x: 0, y: 0 },
+      size: { width: 1, height: 1 },
+      title: 'st',
+      color: '',
+      group: null,
+      agentId: 'codex'
+    } as CanvasNodeState
+    expect(stationOf(node)?.agentId).toBe('claude')
   })
 })
 

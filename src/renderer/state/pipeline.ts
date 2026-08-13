@@ -1,11 +1,12 @@
 import { create } from 'zustand'
 import type { NodeTerminalApi, PipelineIssue, ProjectPipeline } from '@shared/types'
-import { hasHooks, resumeCommand, type AgentId } from '@shared/agents/config'
-import { LocalTransport } from '../terminal/local-transport'
-import { deliverCommand } from '../terminal/command-delivery'
+import { resumeCommand } from '@shared/agents/config'
+import { withPermissionMode } from '@shared/agents/approval-mode'
 import {
   MAX_ISSUE_HOPS,
+  assignmentTextFor,
   chainOrder,
+  composeAssignmentPrompt,
   composeIssuePrompt,
   firstStation,
   hopCount,
@@ -14,20 +15,24 @@ import {
   newIssue,
   nextEdge,
   resolveDecision,
+  sandboxCwdFor,
   stationsOf,
   upstreamConnectors,
+  type Satellite,
   type Station
 } from '../lib/pipeline'
-import { createAgentNode } from './workspace'
-import { activePermissionMode } from './permissionMode'
+import { hasMountLaunch } from '../terminal/launch-ledger'
+import { createAgentNode, prefixLaunchWithCd } from './workspace'
+import { ensureActivePermissionMode } from './permissionMode'
 import { useAgentStatus } from './agentStatus'
 import { useProjects } from './projects'
 import { markWorkspaceDirty } from './workspaceDirty'
 
 /**
  * The loop engine — the one impure home of the pipeline (state/pipeline.ts). Everything it
- * decides comes from the pure lib/pipeline.ts; this file owns timers, the station pty clients,
- * and the agentStatus subscription that advances issues when an agent's turn completes.
+ * decides comes from the pure lib/pipeline.ts; this file owns timers, the station launch
+ * choreography, and the agentStatus subscription that advances issues when an agent's turn
+ * completes.
  *
  * Contract with the rest of the app:
  *  - Issues/edges PERSIST on `project.pipeline` (via useProjects.setProjectPipeline +
@@ -36,12 +41,20 @@ import { markWorkspaceDirty } from './workspaceDirty'
  *    and station config is read through `EngineCtx.getStations`, fed by Canvas from live nodes).
  *  - A station's pty session uses persistKey = node id — the SAME contract terminal nodes
  *    follow, so tmux continuity, the session-memory panel, and the kanban modal all see it.
+ *  - The engine SPAWNS NOTHING. An agent station is a mounted terminal node (TerminalNode owns
+ *    the pty + xterm exactly as for any terminal); the engine only decides WHEN the Claude CLI
+ *    is launched into that pane — via `pty.sendText` at a shell — and what rides the launch:
+ *    `cd` into the connected sandbox folder, and the connected assignment as the initial
+ *    prompt. Everything the engine types is pane-guarded (a shell would EXECUTE a multi-line
+ *    prompt), and every wait is bounded — the engine must never hang the canvas.
  */
 
 export interface EngineCtx {
   api: NodeTerminalApi
   projectId: string
   getStations: () => Station[]
+  /** The assignment/sandbox satellite cards, read live like stations. */
+  getSatellites: () => Satellite[]
   /** Persists engine-minted node facts (agentSessionId) onto the live station node. */
   updateNodeData: (nodeId: string, patch: Record<string, unknown>) => void
 }
@@ -83,10 +96,9 @@ export const usePipelineFx = create<PipelineFxState>((set, get) => ({
 
 // ---- module singletons ---------------------------------------------------------------------
 
-/** One background pty client per agent station this app run has spawned/attached. The client is
- *  kept for the app's lifetime (killing it on a plain-shell fallback would kill the CLI — the
- *  live-work rule); the tmux session outlives us either way. */
-const stationClients = new Map<string, { transport: LocalTransport; sessionId: string }>()
+/** One in-flight launch/ensure per station — a ▶ Start click and an arriving issue must not
+ *  both type a launch line into the same pane. */
+const stationLaunches = new Map<string, Promise<void>>()
 
 /** Agent stations whose CURRENT issue was injected and now awaits a working→done transition. */
 const awaitTurn = new Map<string, { issueId: string; sawWorking: boolean }>()
@@ -169,21 +181,12 @@ export function deleteIssue(ctx: EngineCtx, issueId: string): void {
   writePipeline(ctx.projectId, { ...p, issues: p.issues.filter((i) => i.id !== issueId) })
 }
 
-/** Permanent station delete (Canvas): detach our background client and drop every engine hold
- *  for the node. Canvas destroys the tmux session itself (`transport.destroy`, the terminal-node
- *  contract) — this only releases what the ENGINE owns, so nothing keeps the dead session
- *  attached (an attached session is invisible to the reaper). No-op for nodes we never spawned. */
-export function releaseStationClient(nodeId: string): void {
-  const c = stationClients.get(nodeId)
-  if (c) {
-    try {
-      c.transport.kill(c.sessionId)
-    } catch {
-      // Already dead — the session is being destroyed either way.
-    }
-    stationClients.delete(nodeId)
-  }
+/** Permanent station delete (Canvas): drop every engine hold for the node. The node's terminal
+ *  (TerminalNode) and Canvas's delete path own the pty client + `transport.destroy`; this only
+ *  releases what the ENGINE holds, so a deleted station can't keep a wait or launch lock alive. */
+export function releaseStationHolds(nodeId: string): void {
   awaitTurn.delete(nodeId)
+  stationLaunches.delete(nodeId)
 }
 
 /** A human move (kanban drag, issue-card action): to a station, to 'done', or back to 'queue'.
@@ -238,13 +241,17 @@ export function advanceIssueManually(ctx: EngineCtx, issueId: string): void {
   routeWaitingIssue(ctx, issueId, 'next')
 }
 
-/** Station nodes were deleted: drop their edges; issues stranded there return to the Queue. */
+/** Station/satellite nodes were deleted: drop their edges (chain AND `cfg-` config edges);
+ *  issues stranded at a deleted station return to the Queue. */
 export function prunePipeline(ctx: EngineCtx): void {
   const p = useProjects.getState().getProject(ctx.projectId)?.pipeline
   if (!p) return
   const stations = ctx.getStations()
   const ids = new Set(stations.map((s) => s.id))
-  const edges = p.edges.filter((e) => ids.has(e.from) && ids.has(e.to))
+  // Config edges' FROM side is a satellite, never a station — without this set a satellite's
+  // edge would be pruned the tick after it was drawn.
+  const live = new Set([...ids, ...ctx.getSatellites().map((s) => s.id)])
+  const edges = p.edges.filter((e) => live.has(e.from) && live.has(e.to))
   const issues = p.issues.map((i) =>
     i.atNodeId && !ids.has(i.atNodeId)
       ? { ...releaseEngineHolds(i), status: 'queued' as const, atNodeId: undefined }
@@ -386,18 +393,18 @@ const ENGINE_NOTES: Record<string, string> = {
   'ssh-project':
     '[engine] pipeline stations are local-only in v1 — this is an SSH project, so no local session was spawned. Run the pipeline from a local project.',
   'agent-not-up':
-    '[engine] the agent CLI never came up in this session — a shell owns the pane, so the issue prompt was NOT injected (typed into a shell it would execute line by line). Check the cli is installed, then re-queue the card.'
+    '[engine] the Claude CLI never came up in this station — a shell owns the pane, so the issue prompt was NOT injected (typed into a shell it would execute line by line). Check the station terminal, then re-queue the card.'
 }
 
 async function startAgentIssue(ctx: EngineCtx, st: Station, issue: PipelineIssue): Promise<void> {
   injecting.add(issue.id)
   patchIssue(ctx.projectId, issue.id, (i) => ({ ...i, status: 'active' }))
   try {
-    // Local-only v1: spawning here without `sshRemote` would create a LOCAL session for an SSH
-    // project's remote cwd — the exact class the "a remote node is NEVER spawned locally"
-    // invariant forbids. Canvas disables station creation on SSH projects; this is the backstop.
+    // Local-only v1: an SSH project's station would launch a LOCAL CLI for a remote cwd — the
+    // class the "a remote node is NEVER spawned locally" invariant forbids. Canvas disables
+    // station creation on SSH projects; this is the backstop.
     if (useProjects.getState().getProject(ctx.projectId)?.ssh) throw new Error('ssh-project')
-    await ensureAgentSession(ctx, st)
+    await ensureStationAgent(ctx, st)
     // Injection guard: the prompt is multi-line, and typed at a bare shell each line would
     // EXECUTE (the note-push rule). A live pane owned by a shell refuses regardless of any
     // stale status; an unknown pane with no status ever seen refuses too (fail-closed —
@@ -428,107 +435,134 @@ async function startAgentIssue(ctx: EngineCtx, st: Station, issue: PipelineIssue
   }
 }
 
-async function ensureAgentSession(ctx: EngineCtx, st: Station): Promise<void> {
-  const agentId = (st.agentId ?? 'claude') as AgentId
-  let client = stationClients.get(st.id)
-  if (!client) {
-    const transport = new LocalTransport(ctx.api)
-    const res = await transport.create({
-      persistKey: st.id,
-      cwd: st.cwd,
-      cols: 100,
-      rows: 30,
-      agentId,
-      // CLAUDE_CONFIG_DIR is injected at spawn from this — the launch command alone does not
-      // select the identity (same as TerminalNode's create).
-      accountId: st.accountId
-    })
-    client = { transport, sessionId: res.sessionId }
-    stationClients.set(st.id, client)
-    const hasStatus = !!useAgentStatus.getState().byId[st.id]?.state
-    if (res.fresh || !hasStatus) {
-      const launch = await composeLaunch(ctx, st, agentId, res.fresh)
-      if (launch) {
-        await deliverWhenShellReady(client.transport, client.sessionId, launch)
-        // A hook-less agent (custom CLI) never reports status — waiting on it would stall
-        // every fresh launch for the full timeout. Its readiness is judged by the pane
-        // check in startAgentIssue instead.
-        if (hasHooks(agentId)) await waitForAgentUp(st.id, AGENT_UP_TIMEOUT_MS)
+/** ▶ Start on a station's terminal (or an issue arriving): make sure the Claude CLI is running
+ *  in the station's pane. Public so the node's Start action shares the issue path's launch lock. */
+export function startStationAgent(ctx: EngineCtx, stationId: string): void {
+  const st = ctx.getStations().find((s) => s.id === stationId)
+  if (!st || st.kind !== 'agent') return
+  if (useProjects.getState().getProject(ctx.projectId)?.ssh) return
+  void ensureStationAgent(ctx, st).catch(() => {
+    // The pane guard in startAgentIssue is the reporting path; a manual Start that could not
+    // launch leaves the terminal exactly as it was, in view.
+  })
+}
+
+/** One-shot assignment push, used when an assignment card is CONNECTED to a station whose CLI
+ *  is already running (a fresh launch instead carries the assignment as its initial prompt).
+ *  Pane-guarded like every engine write: typed at a shell the text would execute, so a station
+ *  whose CLI is not up gets nothing — its next launch resolves the assignment anyway. */
+export async function pushAssignmentToStation(ctx: EngineCtx, stationId: string): Promise<void> {
+  const pane = await ctx.api.pty.paneCommand(stationId).catch(() => null)
+  if (!pane || SHELLS.has(pane.toLowerCase())) return
+  if (!useAgentStatus.getState().byId[stationId]?.state) return
+  const p = pipelineOf(ctx.projectId)
+  const msg = composeAssignmentPrompt(assignmentTextFor(stationId, p.edges, ctx.getSatellites()))
+  if (!msg) return
+  void ctx.api.pty.sendText(stationId, msg)
+}
+
+/**
+ * Ensure the station's pane runs the Claude CLI, launching it if a shell owns the pane. The
+ * engine types the launch with `pty.sendText` — the station's terminal node owns the pty itself.
+ * Serialized per station (`stationLaunches`), and deferred to TerminalNode whenever ITS mount
+ * launch is still in flight (`hasMountLaunch` — cold-restore resume writes race the first issue,
+ * and two launch lines at one shell would feed the second into the CLI as typed input).
+ */
+async function ensureStationAgent(ctx: EngineCtx, st: Station): Promise<void> {
+  const prev = stationLaunches.get(st.id)
+  if (prev) return prev
+  const run = (async () => {
+    if (hasMountLaunch(st.id)) {
+      await waitForAgentUp(st.id, AGENT_UP_TIMEOUT_MS)
+      await sleep(AGENT_SETTLE_MS)
+      return
+    }
+    let pane = await ctx.api.pty.paneCommand(st.id).catch(() => null)
+    if (pane === null) {
+      // No session yet — the node's terminal is still spawning (a just-created station's first
+      // issue). Give the mount a bounded window, then look again.
+      pane = await waitForPane(ctx, st.id, PANE_WAIT_MS)
+      if (pane === null) throw new Error('agent-not-up')
+    }
+    if (!SHELLS.has(pane.toLowerCase())) {
+      // The CLI (or something that is not a shell) already owns the pane — nothing to type.
+      // If its hooks have not reported yet (launch still warming), give them the usual window.
+      if (!useAgentStatus.getState().byId[st.id]?.state) {
+        await waitForAgentUp(st.id, AGENT_UP_TIMEOUT_MS)
         await sleep(AGENT_SETTLE_MS)
       }
+      return
     }
+    const launch = await composeStationLaunch(ctx, st)
+    const ok = await ctx.api.pty.sendText(st.id, launch)
+    if (!ok) throw new Error('agent-not-up')
+    await waitForAgentUp(st.id, AGENT_UP_TIMEOUT_MS)
+    await sleep(AGENT_SETTLE_MS)
+  })()
+  stationLaunches.set(st.id, run)
+  try {
+    await run
+  } finally {
+    if (stationLaunches.get(st.id) === run) stationLaunches.delete(st.id)
   }
 }
 
-/** Fresh session → the same composed launch a new agent node gets (session-id mint included,
- *  persisted onto the station). Warm session → only launch when a SHELL owns the pane (resume
- *  by the known session id when there is one); a live CLI gets nothing typed into it. */
-async function composeLaunch(
-  ctx: EngineCtx,
-  st: Station,
-  agentId: AgentId,
-  fresh: boolean
-): Promise<string | null> {
-  if (!fresh) {
-    const pane = await ctx.api.pty.paneCommand(st.id).catch(() => null)
-    if (pane && !SHELLS.has(pane.toLowerCase())) return null
-    const known = knownSessionId(st.id)
-    if (known) {
-      const resume = resumeCommand(agentId, known)
-      if (resume) return resume
-    }
+/**
+ * The launch line typed at the station's shell. Resume when any session id is known — the
+ * resumed conversation already carries its assignment. Fresh start otherwise: the same composed
+ * launch a new Claude agent node gets (session-id mint persisted onto the station, permission
+ * mode resolved through the probe-aware path), with the CONNECTED assignment as the initial
+ * prompt. Both shapes are prefixed with `cd` into the resolved sandbox folder (else the project
+ * folder the station carries) — the pane's shell may have been spawned before the sandbox was
+ * connected, so the cwd is entered explicitly, single-quoted (user-picked text on a shell line).
+ */
+async function composeStationLaunch(ctx: EngineCtx, st: Station): Promise<string> {
+  const p = pipelineOf(ctx.projectId)
+  const satellites = ctx.getSatellites()
+  const cwd = sandboxCwdFor(st.id, p.edges, satellites) ?? st.cwd
+  const mode = await ensureActivePermissionMode('claude')
+  const known = useAgentStatus.getState().byId[st.id]?.sessionId || st.agentSessionId
+  if (known) {
+    const resume = resumeCommand('claude', known)
+    if (resume) return prefixLaunchWithCd(withPermissionMode(resume, 'claude', mode), cwd)
   }
+  const assignment = composeAssignmentPrompt(assignmentTextFor(st.id, p.edges, satellites))
   const proto = createAgentNode(
-    agentId,
+    'claude',
     0,
-    st.cwd,
+    cwd,
     undefined,
-    undefined,
+    assignment || undefined,
     undefined,
     // The station's accountId was resolved at creation (resolveNewNodeAccount — explicit pick →
     // project default → system), the same immutable contract terminal agent nodes follow.
     st.accountId,
-    activePermissionMode(agentId)
+    mode
   )
   const minted = proto.data.agentSessionId
   if (minted) ctx.updateNodeData(st.id, { agentSessionId: minted })
-  return (proto.data.initialCommand as string | undefined) ?? null
+  return prefixLaunchWithCd(proto.data.initialCommand as string, cwd)
 }
 
-function knownSessionId(nodeId: string): string | undefined {
-  return useAgentStatus.getState().byId[nodeId]?.sessionId ?? undefined
-}
+const PANE_WAIT_MS = 10_000
 
-function deliverWhenShellReady(
-  transport: LocalTransport,
-  sessionId: string,
-  cmd: string
-): Promise<void> {
+function waitForPane(ctx: EngineCtx, nodeId: string, timeoutMs: number): Promise<string | null> {
   return new Promise((resolve) => {
-    let done = false
-    let timer: ReturnType<typeof setTimeout>
-    const fire = (): void => {
-      if (done) return
-      done = true
-      unsub()
-      deliverCommand(
-        {
-          write: (d) => transport.write(sessionId, d),
-          onData: (cb) => transport.onData(sessionId, cb)
-        },
-        cmd,
-        () => resolve()
-      )
-      // deliverCommand is fail-open but its settle callback only fires on delivery paths;
-      // resolve on a backstop either way so the engine can never hang on a silent shell.
-      setTimeout(resolve, 8000)
+    const started = Date.now()
+    const poll = (): void => {
+      void ctx.api.pty
+        .paneCommand(nodeId)
+        .then((pane) => {
+          if (pane) return resolve(pane)
+          if (Date.now() - started > timeoutMs) return resolve(null)
+          setTimeout(poll, 500)
+        })
+        .catch(() => {
+          if (Date.now() - started > timeoutMs) return resolve(null)
+          setTimeout(poll, 500)
+        })
     }
-    const unsub = transport.onData(sessionId, () => {
-      if (done) return
-      clearTimeout(timer)
-      timer = setTimeout(fire, 200)
-    })
-    timer = setTimeout(fire, 1500)
+    poll()
   })
 }
 

@@ -126,8 +126,10 @@ checklists for exactly this.
   executes line by line. Verify the pane (status or `paneCommand`) before `sendText`.
 - An issue's `active` status is engine-held; the holds are in-memory. Any new path that sets
   `active` must either hold it or be covered by the tick's self-heal (orphaned active → queued).
-- Deleting an agent station must release the engine's client AND destroy its tmux session
-  (route through Canvas `deleteNodes`, never React Flow's `deleteElements`).
+- An agent station IS a terminal node (TerminalNode renders type 'agent'); its × destroys the
+  tmux session like any terminal's, and Canvas `deleteNodes` additionally releases the engine's
+  holds (`releaseStationHolds`). The engine spawns nothing — it only TYPES a launch into the
+  station's pane, and only when a shell verifiably owns it.
 - Stations are local-only in v1 — disable creation with the reason on SSH projects, don't hide it.
 
 ## Pull requests

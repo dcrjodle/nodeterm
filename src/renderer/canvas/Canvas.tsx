@@ -64,7 +64,8 @@ import {
   WEBGL_GESTURE_SETTLE_MS
 } from '../terminal/webgl-budget'
 import { StickyNode } from '../nodes/StickyNode'
-import { AgentStationNode, ConnectorStationNode, DecisionStationNode } from '../nodes/StationNodes'
+import { ConnectorStationNode, DecisionStationNode } from '../nodes/StationNodes'
+import { AssignmentNode, SandboxNode } from '../nodes/SatelliteNodes'
 import { GroupNode, setWorktreeActionHandler } from '../nodes/GroupNode'
 import { LazyEditorNode, LazyDiffNode } from '../nodes/lazyMonacoNodes'
 import { DinoNode } from '../nodes/DinoNode'
@@ -193,15 +194,16 @@ import { useProjects } from '../state/projects'
 import {
   addIssue as pipelineAddIssue,
   prunePipeline,
-  releaseStationClient,
+  pushAssignmentToStation,
+  releaseStationHolds,
   scheduleTick,
   setEngineCtx,
   usePipelineFx,
   wireAgentTransitions,
   type EngineCtx
 } from '../state/pipeline'
-import { stationsOf } from '../lib/pipeline'
-import { isPipelineKind } from '@shared/types'
+import { sandboxCwdFor, satellitesOf, stationsOf } from '../lib/pipeline'
+import { isPipelineKind, isSatelliteKind } from '@shared/types'
 import { useAgentStatus } from '../state/agentStatus'
 import { useCodexIdentity, codexFallbackText } from '../state/codexIdentity'
 import { useTeamAccessEvents } from '../state/teamAccess'
@@ -332,6 +334,8 @@ import {
   createSshTerminalNode,
   createStickyNode,
   createAgentStationNode,
+  createAssignmentNode,
+  createSandboxNode,
   createDecisionNode,
   createConnectorNode,
   createTerminalNode,
@@ -532,14 +536,17 @@ const ropeEdge = (id: string, source: string, target: string, color: string): Ed
 const minimapNodeColor = (n: Node): string =>
   (n.data as { color?: string })?.color ?? '#0a84ff'
 
+/** A node whose body is a live terminal (TerminalNode): plain terminals and agent stations. */
+const isTerminalBacked = (t: string | undefined): boolean => t === 'terminal' || t === 'agent'
+
 /** The agent a terminal node was CREATED as. Deliberately NOT `agentIdOf`, whose extra hook-status
  *  fallback also reports a plain terminal someone typed `claude` into by hand: TerminalNode's
  *  restart closure captures `createdAgentId` too — the ONE shared derivation — so a node offered a
  *  restart on the strength of the wider one would get a row whose closure refuses every click.
- *  Anything that is not a terminal (a sticky, an editor) is undefined, which `restartEligibility`
- *  reads as `not-resumable`. */
+ *  Anything that is not terminal-backed (a sticky, an editor) is undefined, which
+ *  `restartEligibility` reads as `not-resumable`. */
 const restartAgentIdOf = (n: Node | undefined): string | undefined =>
-  !n || n.type !== 'terminal' ? undefined : createdAgentId(n.data)
+  !n || !isTerminalBacked(n.type) ? undefined : createdAgentId(n.data)
 
 /** One canvas node as a board card, or null when this kind is not a card at all (a group frame, an
  *  editor, a diff). The board derives its cards from the canvas live, so this is the single
@@ -1186,9 +1193,13 @@ export function Canvas() {
       video: withNodeBoundary(VideoNode),
       web: withNodeBoundary(WebNode),
       browser: withNodeBoundary(BrowserNode),
-      agent: withNodeBoundary(AgentStationNode),
+      // An agent station IS a terminal: TerminalNode renders type 'agent' with station chrome
+      // (pipe/cfg handles, issue badges, ▶ Start) — see the `type` prop note in TerminalNode.
+      agent: withNodeBoundary(TerminalNode),
       decision: withNodeBoundary(DecisionStationNode),
-      connector: withNodeBoundary(ConnectorStationNode)
+      connector: withNodeBoundary(ConnectorStationNode),
+      assignment: withNodeBoundary(AssignmentNode),
+      sandbox: withNodeBoundary(SandboxNode)
     }),
     []
   )
@@ -1468,6 +1479,20 @@ export function Canvas() {
     const p = store.getProject(store.activeProjectId)?.pipeline
     if (!p?.edges.length) return []
     return p.edges.map((e) => {
+      // Config edges (assignment/sandbox → station): dashed, muted, no transit pulses — they
+      // carry configuration, not issues. Distinguished by their `cfg-` id (minted in onConnect).
+      if (e.id.startsWith('cfg-')) {
+        return {
+          id: e.id,
+          source: e.from,
+          target: e.to,
+          sourceHandle: 'cfg-out',
+          targetHandle: 'cfg-in',
+          type: 'default',
+          className: 'cfg-edge',
+          style: { stroke: 'var(--muted)', strokeWidth: 1.5, strokeDasharray: '5 4', opacity: 0.8 }
+        }
+      }
       const hot = !!pipeTransit[e.id]
       return {
         id: e.id,
@@ -2267,7 +2292,7 @@ export function Canvas() {
         // module-level state survives the node, and if the owner UNDOES the delete we are left
         // holding a node that reads "closed by another user" while its session is alive again.
         const gone = nodesRef.current.find((n) => n.id === mutation.id)
-        if (gone?.type === 'terminal')
+        if (gone?.type === 'terminal' || gone?.type === 'agent')
           disposeTerminalOnUnmount(sessionForProject(projectId).id, gone.id)
       }
       // Keep the ref in step immediately: a burst (a peer's bulk delete) arrives within one tick,
@@ -2445,6 +2470,44 @@ export function Canvas() {
         if (engineCtxRef.current) scheduleTick(engineCtxRef.current)
         return
       }
+      // Config edges: an assignment/sandbox satellite wired INTO an agent station (either drag
+      // direction), persisted beside the chain on project.pipeline with a `cfg-` id.
+      const cfgSat =
+        srcNode && tgtNode && isSatelliteKind(srcNode.type) && tgtNode.type === 'agent'
+          ? { sat: srcNode, station: tgtNode }
+          : srcNode && tgtNode && srcNode.type === 'agent' && isSatelliteKind(tgtNode.type)
+            ? { sat: tgtNode, station: srcNode }
+            : null
+      if (cfgSat) {
+        const store = useProjects.getState()
+        const pid = store.activeProjectId
+        const p = store.getProject(pid)?.pipeline ?? { edges: [], issues: [] }
+        if (p.edges.some((e) => e.from === cfgSat.sat.id && e.to === cfgSat.station.id)) return
+        // One sandbox per station: connecting a new one replaces the old edge — two folders
+        // cannot both be "the" cwd, and last-wins by silent precedence would be invisible.
+        const sandboxIds = new Set(
+          nodesRef.current.filter((n) => n.type === 'sandbox').map((n) => n.id)
+        )
+        const edges =
+          cfgSat.sat.type === 'sandbox'
+            ? p.edges.filter((e) => !(e.to === cfgSat.station.id && sandboxIds.has(e.from)))
+            : p.edges
+        store.setProjectPipeline(pid, {
+          ...p,
+          edges: [
+            ...edges,
+            { id: `cfg-${cfgSat.sat.id}-${cfgSat.station.id}`, from: cfgSat.sat.id, to: cfgSat.station.id }
+          ]
+        })
+        markDirty()
+        const ctx = engineCtxRef.current
+        // An assignment connected to a station whose CLI is already RUNNING is pushed once as
+        // context (pane-guarded inside); a not-yet-started station gets it with the launch.
+        if (ctx && cfgSat.sat.type === 'assignment') {
+          void pushAssignmentToStation(ctx, cfgSat.station.id)
+        }
+        return
+      }
       const se = linkEndpointOf(c.source)
       const te = linkEndpointOf(c.target)
       if (!se || !te) return
@@ -2502,8 +2565,9 @@ export function Canvas() {
   // Double-click a context link to remove it (ephemeral subagent/loop edges are left alone).
   const onEdgeDoubleClick = useCallback(
     (_e: React.MouseEvent, edge: Edge) => {
-      // Pipeline edges: double-click unchains (same gesture as context links).
-      if (edge.id.startsWith('pipe-')) {
+      // Pipeline edges (chain AND `cfg-` config): double-click unchains (same gesture as
+      // context links).
+      if (edge.id.startsWith('pipe-') || edge.id.startsWith('cfg-')) {
         const store = useProjects.getState()
         const pid = store.activeProjectId
         const p = store.getProject(pid)?.pipeline
@@ -3414,6 +3478,7 @@ export function Canvas() {
       api,
       projectId: activeProjectId,
       getStations: () => stationsOf(flowToNodeStates(nodesRef.current)),
+      getSatellites: () => satellitesOf(flowToNodeStates(nodesRef.current)),
       updateNodeData: (nodeId, patch) =>
         setNodes((ns) => ns.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n)))
     }
@@ -3428,10 +3493,15 @@ export function Canvas() {
     }
   }, [activeProjectId, api, setNodes])
 
-  // Station add/delete and issue/edge changes both re-tick the engine; deleted stations also
-  // prune their edges and send stranded issues back to the Queue.
+  // Station/satellite add/delete and issue/edge changes both re-tick the engine; deleted
+  // stations also prune their edges (and a deleted satellite its `cfg-` edges) and send
+  // stranded issues back to the Queue.
   const stationSig = useMemo(
-    () => nodes.filter((n) => isPipelineKind(n.type)).map((n) => n.id).join('|'),
+    () =>
+      nodes
+        .filter((n) => isPipelineKind(n.type) || isSatelliteKind(n.type))
+        .map((n) => n.id)
+        .join('|'),
     [nodes]
   )
   const pipeIssueSig = useProjects((s) => {
@@ -3445,30 +3515,37 @@ export function Canvas() {
     scheduleTick(ctx)
   }, [stationSig, pipeIssueSig, pipeEdgeSig])
 
-  // "Watch" on an agent station: opens a REAL terminal co-attached (via tmux) to the station's
-  // session — zero new machinery, and closing it never touches the station's work.
+  // Sandbox → station cwd sync: a station's `data.cwd` mirrors its CONNECTED sandbox folder
+  // (else the project folder), so future SPAWNS — cold restore after a reboot, a respawn — land
+  // in the right directory. The already-running pane keeps the cwd it was spawned with (a pty's
+  // cwd is fixed at spawn); the engine's launch line carries its own `cd`, which is what makes
+  // "started from the sandbox folder" true for the CLI regardless of when the sandbox was wired.
+  const sandboxCwdSig = useMemo(
+    () =>
+      nodes
+        .filter((n) => n.type === 'sandbox')
+        .map((n) => `${n.id}:${(n.data.cwd as string | undefined) ?? ''}`)
+        .join('|'),
+    [nodes]
+  )
   useEffect(() => {
-    const onWatch = (e: Event): void => {
-      const nodeId = (e as CustomEvent<{ nodeId?: string }>).detail?.nodeId
-      if (!nodeId) return
-      const src = nodesRef.current.find((n) => n.id === nodeId)
-      setNodes((ns) => {
-        const t = createTerminalNode(
-          ns.length,
-          undefined,
-          src
-            ? { x: src.position.x + ((src.width as number) ?? 340) + 60, y: src.position.y }
-            : undefined,
-          `tmux -L node-terminal attach -t =nt-${nodeId}`
+    const project = useProjects.getState().getProject(activeProjectId)
+    const p = project?.pipeline
+    if (!p) return
+    const states = flowToNodeStates(nodesRef.current as CanvasNode[])
+    const sats = satellitesOf(states)
+    for (const st of stationsOf(states)) {
+      if (st.kind !== 'agent') continue
+      const want = sandboxCwdFor(st.id, p.edges, sats) ?? project?.cwd
+      const node = nodesRef.current.find((n) => n.id === st.id)
+      if (node && (node.data.cwd as string | undefined) !== want) {
+        setNodes((ns) =>
+          ns.map((n) => (n.id === st.id ? { ...n, data: { ...n.data, cwd: want } } : n))
         )
-        t.data.title = `${(src?.data.title as string) ?? 'Station'} — terminal`
-        return [...ns, t]
-      })
-      markDirty()
+        markDirty()
+      }
     }
-    window.addEventListener('nodeterm:watch-station', onWatch)
-    return () => window.removeEventListener('nodeterm:watch-station', onWatch)
-  }, [setNodes, markDirty])
+  }, [pipeEdgeSig, sandboxCwdSig, activeProjectId, setNodes, markDirty])
 
   const addSticky = useCallback(
     (center?: { x: number; y: number }, groupId?: string) => {
@@ -3481,10 +3558,12 @@ export function Canvas() {
     [setNodes, markDirty, emptyNodePos, parentInto]
   )
 
-  /** Pipeline stations are local-only in v1: the engine spawns their sessions without
-   *  `sshRemote`, so on an SSH project a station would become a LOCAL shell in the remote cwd —
-   *  the exact class the "a remote node is NEVER spawned locally" invariant forbids. Every
-   *  creation surface disables/omits on this reason; the engine refuses too (defense in depth). */
+  /** Pipeline stations are local-only in v1: a station's terminal spawns without `sshRemote`,
+   *  so on an SSH project it would become a LOCAL shell in the remote cwd — the exact class the
+   *  "a remote node is NEVER spawned locally" invariant forbids. Every creation surface
+   *  disables/omits on this reason; the engine refuses too (defense in depth). The satellites
+   *  are inert config cards, but they only mean something wired to a station, so they share
+   *  the gate rather than inviting a dead end. */
   const stationSshReason = isSshProject
     ? 'Pipeline stations are local-only in v1 — not available on SSH projects.'
     : null
@@ -3503,7 +3582,6 @@ export function Canvas() {
         ...ns,
         createAgentStationNode(
           ns.filter((n) => n.type === 'agent').length,
-          'claude',
           center ?? emptyNodePos(),
           project?.cwd,
           account
@@ -3512,6 +3590,30 @@ export function Canvas() {
       markDirty()
     },
     [setNodes, markDirty, emptyNodePos, activeProjectId, isSshProject]
+  )
+
+  const addAssignmentSatellite = useCallback(
+    (center?: { x: number; y: number }) => {
+      if (isSshProject) return
+      setNodes((ns) => [
+        ...ns,
+        createAssignmentNode(ns.filter((n) => n.type === 'assignment').length, center ?? emptyNodePos())
+      ])
+      markDirty()
+    },
+    [setNodes, markDirty, emptyNodePos, isSshProject]
+  )
+
+  const addSandboxSatellite = useCallback(
+    (center?: { x: number; y: number }) => {
+      if (isSshProject) return
+      setNodes((ns) => [
+        ...ns,
+        createSandboxNode(ns.filter((n) => n.type === 'sandbox').length, center ?? emptyNodePos())
+      ])
+      markDirty()
+    },
+    [setNodes, markDirty, emptyNodePos, isSshProject]
   )
 
   const addDecisionStation = useCallback(
@@ -3928,17 +4030,15 @@ export function Canvas() {
         if (!set.has(n.id)) return
         // Permanent delete: the upcoming unmount must dispose the xterm, not park it (the
         // session is being destroyed right here). Also drops an already-parked entry.
-        if (n.type === 'terminal')
+        // Agent stations ARE terminals (TerminalNode renders them) with sessions under the same
+        // persistKey = node id contract, so they take the identical dispose + destroy — plus a
+        // release of the engine's holds (launch lock / turn wait) so nothing waits on the dead
+        // node. No-op for never-spawned stations.
+        if (n.type === 'terminal' || n.type === 'agent') {
           disposeTerminalOnUnmount(sessionForProject(useProjects.getState().activeProjectId ?? '').id, n.id)
-        if (n.type === 'terminal') transport.destroy(n.id)
-        // Agent stations spawn engine-owned sessions under the same persistKey = node id
-        // contract; a deleted station must end its session like a deleted terminal — and the
-        // engine's background client must let go FIRST, or the dead session stays attached
-        // (an attached session is invisible to the reaper). No-op for never-spawned stations.
-        if (n.type === 'agent') {
-          releaseStationClient(n.id)
           transport.destroy(n.id)
         }
+        if (n.type === 'agent') releaseStationHolds(n.id)
         // Permanent deletion → drop the node's persisted agent status (sessionId/session/
         // unread/loop). Node unmount no longer does this, so deletion must. The loop card's
         // UI overrides live in agentNodes and are skipped by unmount's clearForParent.
@@ -4658,7 +4758,7 @@ export function Canvas() {
       const set = new Set(ids)
       setNodes((ns) =>
         ns.map((n) =>
-          set.has(n.id) && n.type === 'terminal'
+          set.has(n.id) && isTerminalBacked(n.type)
             ? { ...n, data: { ...n.data, mdMode: !n.data.mdMode } }
             : n
         )
@@ -4701,7 +4801,7 @@ export function Canvas() {
       const set = new Set(ids)
       setNodes((ns) =>
         ns.map((n) =>
-          set.has(n.id) && n.type === 'terminal'
+          set.has(n.id) && isTerminalBacked(n.type)
             ? {
                 ...n,
                 data: { ...n.data, respawnNonce: ((n.data.respawnNonce as number | undefined) ?? 0) + 1 }
@@ -5349,7 +5449,7 @@ export function Canvas() {
               onClick: () => toggleCollapseNodes(ids)
             }
           ] as MenuItem[])),
-      ...(ids.some((nid) => nodesRef.current.find((n) => n.id === nid)?.type === 'terminal')
+      ...(ids.some((nid) => isTerminalBacked(nodesRef.current.find((n) => n.id === nid)?.type))
         ? ([
             ...(isHidden('markdown-view', hidden)
               ? []
@@ -5560,6 +5660,8 @@ export function Canvas() {
         },
         ...agentCreationItems(at, groupId),
         { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+        { label: 'New assignment', icon: <IconNote />, onClick: () => addAssignmentSatellite(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+        { label: 'New sandbox', icon: <IconNote />, onClick: () => addSandboxSatellite(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
         { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
         { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
         { label: 'New issue…', icon: <IconNote />, onClick: () => void addIssueViaPrompt() },
@@ -5665,6 +5767,8 @@ export function Canvas() {
           // Content nodes.
           { label: 'New browser', icon: <IconRemote />, onClick: () => addBrowser(at) },
           { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+          { label: 'New assignment', icon: <IconNote />, onClick: () => addAssignmentSatellite(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+          { label: 'New sandbox', icon: <IconNote />, onClick: () => addSandboxSatellite(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
           { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
           { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
           { label: 'New issue…', icon: <IconNote />, onClick: () => void addIssueViaPrompt() },
@@ -7329,7 +7433,7 @@ export function Canvas() {
             deleteNodes([id])
           } else {
             disposeTerminalOnUnmount(sessionForProject(projectId).id, id) // node may be parked from the project switch
-            releaseStationClient(id) // agent stations only; no-op for everything else
+            releaseStationHolds(id) // agent stations only; no-op for everything else
             transport.destroy(id)
             useAgentStatus.getState().remove(id)
             useProjects.getState().removeNode(projectId, id)
@@ -8270,15 +8374,12 @@ export function Canvas() {
       // persisted agent status (node unmount no longer removes it).
       const project = store.getProject(id)
       project?.nodes.forEach((n) => {
-        if ((n.kind ?? 'terminal') === 'terminal') {
+        // Agent stations ARE terminals (same persistKey = node id session contract).
+        if ((n.kind ?? 'terminal') === 'terminal' || n.kind === 'agent') {
           disposeTerminalOnUnmount(sessionForProject(id).id, n.id) // may be parked from a recent switch away
           transport.destroy(n.id)
         }
-        // Agent stations run engine-spawned sessions under the same persistKey contract.
-        if (n.kind === 'agent') {
-          releaseStationClient(n.id)
-          transport.destroy(n.id)
-        }
+        if (n.kind === 'agent') releaseStationHolds(n.id)
         useAgentStatus.getState().remove(n.id)
       })
       // SSH project: the per-node `transport.destroy` above only ends the REMOTE session for
@@ -8364,6 +8465,8 @@ export function Canvas() {
         ? []
         : [
             { id: 'new-station', label: 'New agent station', icon: <IconNote />, run: () => addAgentStation() },
+            { id: 'new-assignment', label: 'New assignment (station context)', icon: <IconNote />, run: () => addAssignmentSatellite() },
+            { id: 'new-sandbox', label: 'New sandbox (station folder)', icon: <IconNote />, run: () => addSandboxSatellite() },
             { id: 'new-decision', label: 'New decision station', icon: <IconNote />, run: () => addDecisionStation() },
             { id: 'new-connector', label: 'New connector station', icon: <IconNote />, run: () => addConnectorStation() }
           ]),
@@ -9311,6 +9414,8 @@ export function Canvas() {
 
       <Dock
         onAddStation={() => addAgentStation()}
+        onAddAssignment={() => addAssignmentSatellite()}
+        onAddSandbox={() => addSandboxSatellite()}
         onAddDecision={() => addDecisionStation()}
         onAddConnector={() => addConnectorStation()}
         stationsDisabledReason={stationSshReason}

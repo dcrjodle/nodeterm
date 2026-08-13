@@ -6,7 +6,10 @@ import {
   commonParentId,
   createAccountLoginNode,
   createAgentNode,
+  createAgentStationNode,
+  createAssignmentNode,
   createDinoNode,
+  createSandboxNode,
   fitGroupToChildren,
   flowToNodeStates,
   groupSelectedNodes,
@@ -14,6 +17,7 @@ import {
   nodeSshFor,
   reorderGroupWithinParent,
   reorderNodeBefore,
+  prefixLaunchWithCd,
   reparentNode,
   resolveNewNodeAccount,
   selectedRootIds,
@@ -767,5 +771,52 @@ describe('createAgentNode prompt injection', () => {
   it('keeps argv injection byte-identical for codex and gemini', () => {
     expect(createAgentNode('codex', 0, undefined, undefined, 'do X').data.initialCommand).toBe("codex 'do X'")
     expect(createAgentNode('gemini', 0, undefined, undefined, 'do X').data.initialCommand).toBe("gemini 'do X'")
+  })
+})
+
+describe('agent station + satellites', () => {
+  it('createAgentStationNode always runs claude and composes NO launch command', () => {
+    const n = createAgentStationNode(0, undefined, '/proj', 'acct-1')
+    expect(n.type).toBe('agent')
+    expect(n.data.agentId).toBe('claude')
+    expect(n.data.accountId).toBe('acct-1')
+    expect(n.data.cwd).toBe('/proj')
+    // The engine (or ▶ Start) launches the CLI so the launch can resolve the CONNECTED
+    // assignment/sandbox at that moment — an initialCommand here would race it at the shell.
+    expect(n.data.initialCommand).toBeUndefined()
+    expect(n.data.kanbanColumn).toBe(true)
+  })
+
+  it('satellite factories persist round-trip through the serializers', () => {
+    const a = createAssignmentNode(0)
+    a.data.text = 'Standing orders'
+    const s = createSandboxNode(1, undefined, '/work/repo')
+    const states = flowToNodeStates([a, s])
+    expect(states[0].kind).toBe('assignment')
+    expect(states[0].text).toBe('Standing orders')
+    expect(states[1].kind).toBe('sandbox')
+    expect(states[1].cwd).toBe('/work/repo')
+    const back = nodeStatesToFlow(states)
+    expect(back[0].type).toBe('assignment')
+    expect(back[0].data.text).toBe('Standing orders')
+    expect(back[1].type).toBe('sandbox')
+    expect(back[1].data.cwd).toBe('/work/repo')
+  })
+
+  it('nodeStatesToFlow coerces a persisted station to claude (CLI picker removed)', () => {
+    const st = createAgentStationNode(0)
+    const states = flowToNodeStates([st])
+    states[0].agentId = 'codex' as never
+    expect(nodeStatesToFlow(states)[0].data.agentId).toBe('claude')
+  })
+})
+
+describe('prefixLaunchWithCd', () => {
+  it('enters the cwd first, single-quoted, and leaves the bare command without one', () => {
+    expect(prefixLaunchWithCd('claude', undefined)).toBe('claude')
+    expect(prefixLaunchWithCd('claude', '  ')).toBe('claude')
+    expect(prefixLaunchWithCd('claude', '/work/repo')).toBe("cd '/work/repo' && claude")
+    // A cwd is user-picked text on a shell line: quoting is the whole point.
+    expect(prefixLaunchWithCd('claude', "/tmp/it's here")).toBe("cd '/tmp/it'\\''s here' && claude")
   })
 })

@@ -12,10 +12,12 @@ const isMac = /Mac/i.test(navigator.platform || navigator.userAgent)
 interface DockProps {
   dirty: boolean
   onAddStation: () => void
+  onAddAssignment: () => void
+  onAddSandbox: () => void
   onAddDecision: () => void
   onAddConnector: () => void
-  /** When set, the three station rows render disabled with this reason (SSH projects — the
-   *  pipeline is local-only in v1). */
+  /** When set, the station + satellite rows render disabled with this reason (SSH projects —
+   *  the pipeline is local-only in v1). */
   stationsDisabledReason?: string | null
   zoomPct: number
   canUndo: boolean
@@ -44,6 +46,8 @@ interface DockProps {
 export function Dock({
   dirty,
   onAddStation,
+  onAddAssignment,
+  onAddSandbox,
   onAddDecision,
   onAddConnector,
   stationsDisabledReason,
@@ -102,6 +106,24 @@ export function Dock({
             >
               <span className="dock-menu__glyph" style={{ color: '#e05fa6' }}>▣</span>
               <span>Agent station</span>
+            </button>
+            <button
+              onClick={pick(onAddAssignment)}
+              className="dock-menu__primary"
+              disabled={!!stationsDisabledReason}
+              title={stationsDisabledReason ?? undefined}
+            >
+              <span className="dock-menu__glyph" style={{ color: '#9a8cf0' }}>✎</span>
+              <span>Assignment</span>
+            </button>
+            <button
+              onClick={pick(onAddSandbox)}
+              className="dock-menu__primary"
+              disabled={!!stationsDisabledReason}
+              title={stationsDisabledReason ?? undefined}
+            >
+              <span className="dock-menu__glyph" style={{ color: '#4aa3d9' }}>▤</span>
+              <span>Sandbox</span>
             </button>
             <button
               onClick={pick(onAddDecision)}

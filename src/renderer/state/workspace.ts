@@ -28,7 +28,10 @@ export const NODE_COLORS = [
 
 const TERMINAL_SIZE = { width: 640, height: 440 }
 const STICKY_SIZE = { width: 240, height: 200 }
-const AGENT_STATION_SIZE = { width: 340, height: 330 }
+/** Terminal-sized, not card-sized: an agent station IS a live Claude terminal. */
+const AGENT_STATION_SIZE = { width: 560, height: 400 }
+const ASSIGNMENT_SIZE = { width: 280, height: 200 }
+const SANDBOX_SIZE = { width: 280, height: 120 }
 const DECISION_SIZE = { width: 320, height: 280 }
 const CONNECTOR_SIZE = { width: 300, height: 200 }
 const GROUP_SIZE = { width: 520, height: 360 }
@@ -146,6 +149,14 @@ export type CanvasNode = Node<NodeData, NodeKind>
 /** Single-quote a string for safe use as one shell argument (POSIX). */
 export function shellSingleQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
+}
+
+/** A launch line that first enters `cwd` — how an agent station's CLI starts in its sandbox
+ *  folder even though the pane's shell was spawned elsewhere (a sandbox connected after spawn).
+ *  The cwd is user-picked text landing on a shell line, so it is single-quoted, always. */
+export function prefixLaunchWithCd(cmd: string, cwd: string | undefined): string {
+  const dir = cwd?.trim()
+  return dir ? `cd ${shellSingleQuote(dir)} && ${cmd}` : cmd
 }
 
 let idCounter = 0
@@ -704,11 +715,13 @@ const CONNECTOR_LABELS: Record<ConnectorService, string> = {
   custom: 'Connector'
 }
 
-/** Creates a pipeline AGENT station: a cli/assignment/sandbox card whose session the loop
- *  engine spawns on demand (same persistKey = node id contract as terminal nodes). */
+/** Creates a pipeline AGENT station: a real terminal node (rendered by TerminalNode) that always
+ *  runs Claude Code. The node mounts a plain shell in `cwd`; the CLI itself is launched by the
+ *  loop engine (or the station's ▶ Start action) so the launch can resolve the CONNECTED
+ *  assignment/sandbox satellites at that moment — which is why, unlike `createAgentNode`, no
+ *  `initialCommand` is composed here. Same persistKey = node id contract as terminal nodes. */
 export function createAgentStationNode(
   index: number,
-  agentId: AgentId = 'claude',
   center?: { x: number; y: number },
   cwd?: string,
   accountId?: string
@@ -724,12 +737,57 @@ export function createAgentStationNode(
       title: `Agent ${index + 1}`,
       color: STATION_COLORS.agent,
       group: null,
-      agentId,
-      // Same rule as createAgentNode: the managed account is claude-only, resolved once here.
-      ...(accountId && agentId === 'claude' ? { accountId } : {}),
+      // Agent stations always run Claude Code (the per-station CLI picker was removed).
+      agentId: 'claude' as AgentId,
+      // Same rule as createAgentNode: the managed account is resolved once here, immutable.
+      ...(accountId ? { accountId } : {}),
       cwd,
-      assignment: '',
       kanbanColumn: true
+    }
+  }
+}
+
+/** Satellite colors: distinct from the station trio so an edge's endpoints read at a glance. */
+const SATELLITE_COLORS = { assignment: '#9a8cf0', sandbox: '#4aa3d9' } as const
+
+/** Creates an ASSIGNMENT satellite: standing instructions, injected as context when the CLI of
+ *  the agent station it is connected to starts. The text lives in `data.text` (like a sticky). */
+export function createAssignmentNode(index: number, center?: { x: number; y: number }): CanvasNode {
+  return {
+    id: nextId('assignment'),
+    type: 'assignment',
+    position: placeAt(center, index, ASSIGNMENT_SIZE.width, ASSIGNMENT_SIZE.height),
+    width: ASSIGNMENT_SIZE.width,
+    height: ASSIGNMENT_SIZE.height,
+    style: { width: ASSIGNMENT_SIZE.width, height: ASSIGNMENT_SIZE.height },
+    data: {
+      title: `Assignment ${index + 1}`,
+      color: SATELLITE_COLORS.assignment,
+      group: null,
+      text: ''
+    }
+  }
+}
+
+/** Creates a SANDBOX satellite: the folder the connected agent station's CLI starts in
+ *  (without one, the station uses the project folder). The folder lives in `data.cwd`. */
+export function createSandboxNode(
+  index: number,
+  center?: { x: number; y: number },
+  cwd?: string
+): CanvasNode {
+  return {
+    id: nextId('sandbox'),
+    type: 'sandbox',
+    position: placeAt(center, index, SANDBOX_SIZE.width, SANDBOX_SIZE.height),
+    width: SANDBOX_SIZE.width,
+    height: SANDBOX_SIZE.height,
+    style: { width: SANDBOX_SIZE.width, height: SANDBOX_SIZE.height },
+    data: {
+      title: `Sandbox ${index + 1}`,
+      color: SATELLITE_COLORS.sandbox,
+      group: null,
+      cwd
     }
   }
 }
@@ -1334,6 +1392,9 @@ export function nodeStatesToFlow(states: CanvasNodeState[]): CanvasNode[] {
     // tag. Backfill agentId so saved workspaces keep working.
     let agentId = n.agentId
     if (!agentId && Array.isArray(n.tags) && n.tags.includes('claude')) agentId = 'claude'
+    // Agent stations always run Claude Code: a station persisted before the CLI picker was
+    // removed is coerced (stationOf applies the same rule on the engine side).
+    if ((n.kind as string) === 'agent') agentId = 'claude'
     return {
       id: n.id,
       // Default to 'terminal' for nodes saved before the kind field existed.
@@ -1411,7 +1472,11 @@ export function flowToNodeStates(nodes: CanvasNode[]): CanvasNodeState[] {
                         ? DECISION_SIZE
                         : kind === 'connector'
                           ? CONNECTOR_SIZE
-                          : TERMINAL_SIZE
+                          : kind === 'assignment'
+                            ? ASSIGNMENT_SIZE
+                            : kind === 'sandbox'
+                              ? SANDBOX_SIZE
+                              : TERMINAL_SIZE
   return nodes
     .map((n) => {
       const kind: NodeKind = (n.type as NodeKind) ?? 'terminal'
