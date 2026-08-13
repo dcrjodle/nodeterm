@@ -173,7 +173,28 @@ export interface RecycledInfo {
 }
 
 // 'subagent' and 'loop' are render-only (ephemeral hook-driven viz) and never persisted.
-export type NodeKind = 'terminal' | 'sticky' | 'group' | 'editor' | 'diff' | 'video' | 'web' | 'browser' | 'subagent' | 'loop' | 'dino'
+export type NodeKind = 'terminal' | 'sticky' | 'group' | 'editor' | 'diff' | 'video' | 'web' | 'browser' | 'subagent' | 'loop' | 'dino' | 'agent' | 'decision' | 'connector'
+
+/** The three pipeline station kinds — the deterministic loop-factory chain
+ *  (docs/superpowers/specs/2026-08-13-weave-loop-factory.md). `agent` runs a CLI agent in a
+ *  sandbox cwd, `decision` routes issues, `connector` contributes integration context. */
+export type PipelineNodeKind = 'agent' | 'decision' | 'connector'
+
+export const PIPELINE_NODE_KINDS: readonly PipelineNodeKind[] = ['agent', 'decision', 'connector']
+
+export function isPipelineKind(kind: string | undefined): kind is PipelineNodeKind {
+  return kind === 'agent' || kind === 'decision' || kind === 'connector'
+}
+
+/** One deterministic routing rule on a decision station: first case-insensitive substring match
+ *  of `match` against an issue's title+body+notes wins. `route` is 'next', 'back', or the exact
+ *  title of a connected downstream station. */
+export interface DecisionRule {
+  match: string
+  route: string
+}
+
+export type ConnectorService = 'github' | 'slack' | 'gmail' | 'custom'
 
 /** Persisted state of a single canvas node (terminal, sticky note, group frame, or editor). */
 /**
@@ -265,6 +286,26 @@ export interface CanvasNodeState {
   commitOid?: string
   /** group-only: when bound, the git worktree this group works in. */
   worktree?: GroupWorktree
+  // pipeline stations (kind agent/decision/connector)
+  /** agent station: standing instructions injected with every issue that reaches this station. */
+  assignment?: string
+  /** decision station: free-text criteria shown on the card (documentation for the rules). */
+  criteria?: string
+  /** decision station: ordered deterministic routing rules (first match wins). */
+  rules?: DecisionRule[]
+  /** decision station: 'auto' evaluates rules on arrival; 'manual' always waits for a human route. */
+  decisionMode?: 'auto' | 'manual'
+  /** connector station: which integration this station represents. */
+  service?: ConnectorService
+  /** connector station: how the integration authenticates. */
+  authKind?: 'oauth-cli' | 'api-key'
+  /** connector station: NAME of the env var holding the key. Never the value — secrets never
+   *  land in project.json (it is git-shared). */
+  envVar?: string
+  /** connector station (service 'custom'): display label. */
+  customLabel?: string
+  /** pipeline stations: mirrored as a kanban column (default true; right-click toggles). */
+  kanbanColumn?: boolean
 }
 
 /**
@@ -304,6 +345,46 @@ export interface BridgeLink {
   id: string
   source: string
   target: string
+}
+
+/** A directed pipeline edge chaining two stations. `label` names a decision branch; unlabeled
+ *  edges are the default 'next' route. Persisted per project like kanban/bridges. */
+export interface PipelineEdge {
+  id: string
+  from: string
+  to: string
+  label?: string
+}
+
+export type PipelineIssueStatus = 'queued' | 'active' | 'waiting' | 'done'
+
+/** One hop of an issue's journey. `route` records how it left ('next'/'back'/branch label/'manual'). */
+export interface PipelineIssueHop {
+  nodeId: string
+  enteredAt: number
+  leftAt?: number
+  route?: string
+}
+
+/** A unit of work flowing through the pipeline. Rendered as a kanban card in its station's
+ *  column; moved by the loop engine (agent done-transitions, decision rules) or by hand. */
+export interface PipelineIssue {
+  id: string
+  title: string
+  body: string
+  notes: string
+  status: PipelineIssueStatus
+  /** The station the issue currently sits at; unset once done (or while still in the Queue). */
+  atNodeId?: string
+  history: PipelineIssueHop[]
+  createdAt: number
+}
+
+/** Per-project pipeline: the chained edges + the issues flowing through them.
+ *  Shaped like ProjectKanban — validated by `validPipeline` on every load path. */
+export interface ProjectPipeline {
+  edges: PipelineEdge[]
+  issues: PipelineIssue[]
 }
 
 /** One kanban board column. Column order = array order in ProjectKanban.columns. */
@@ -468,6 +549,8 @@ export interface Project {
   dinoHighScore?: number
   /** Kanban task board — shared via .nodeterm/project.json like nodes. */
   kanban?: ProjectKanban
+  /** Loop-factory pipeline (station edges + issues) — shared via .nodeterm/project.json like kanban. */
+  pipeline?: ProjectPipeline
   /** Bridge links between Claude nodes (optional; absent in pre-bridge files). */
   bridges?: BridgeLink[]
   /**

@@ -9047,6 +9047,433 @@ body,
   letter-spacing: 0.04em;
 }
 
+/* ---- Pipeline stations (agent / decision / connector) — the Weave loop-factory cards ---- */
+.station {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, calc(0.3 * var(--shadow-k)));
+  font-size: 12.5px;
+}
+
+.station.selected {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 8px 28px rgba(0, 0, 0, calc(0.3 * var(--shadow-k)));
+}
+
+.station__header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  min-height: 36px;
+}
+
+.station__glyph {
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.station__title {
+  color: var(--text);
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.station__title-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 6px;
+  outline: none;
+}
+
+.station__state {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.station__state--working {
+  color: var(--success);
+}
+
+.station__state--waiting,
+.station__state--blocked {
+  color: var(--warn);
+}
+
+.station__close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+
+.station__header .station__close {
+  margin-left: 4px;
+}
+
+.station__close:hover {
+  color: var(--text);
+  background: var(--panel-header);
+}
+
+.station__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.station__block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.station__block--grow {
+  flex: 1;
+  min-height: 0;
+}
+
+.station__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.station__select,
+.station__rule-input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 8px;
+  outline: none;
+  min-width: 0;
+}
+
+.station__select:focus,
+.station__rule-input:focus,
+.station__text:focus {
+  border-color: var(--accent);
+}
+
+.station__text {
+  flex: 1;
+  min-height: 54px;
+  resize: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  padding: 7px 8px;
+  outline: none;
+}
+
+.station__text--short {
+  flex: none;
+  min-height: 38px;
+  max-height: 64px;
+}
+
+.station__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.station__row--wrap {
+  flex-wrap: wrap;
+}
+
+.station__path {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.station__btn {
+  background: var(--panel-header);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.station__btn:hover {
+  background: var(--surface-overlay);
+  border-color: rgba(var(--tint-rgb), 0.14);
+}
+
+.station__btn--add {
+  align-self: flex-start;
+}
+
+.station__btn--route {
+  border-color: var(--warn);
+  color: var(--warn);
+  background: transparent;
+}
+
+.station__btn--route:hover {
+  background: rgba(232, 163, 61, 0.12);
+}
+
+.station__mode {
+  margin-left: auto;
+  display: inline-flex;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 1px;
+  gap: 1px;
+}
+
+.station__mode-btn {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.station__mode-btn.on {
+  background: var(--surface-overlay);
+  color: var(--text);
+}
+
+.station__rules {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.station__rule {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.station__rule-word {
+  color: var(--muted-2);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.station__rule-input {
+  flex: 1;
+  padding: 3px 7px;
+  font-size: 12px;
+}
+
+.station__rule-del {
+  background: none;
+  border: none;
+  color: var(--muted-2);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 3px;
+}
+
+.station__rule-del:hover {
+  color: var(--danger);
+}
+
+.station__hint {
+  color: var(--muted-2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.station__badges {
+  display: flex;
+  gap: 6px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.station__badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.station__badge--active {
+  color: var(--success);
+}
+
+.station__badge--waiting {
+  color: var(--warn);
+}
+
+.dock-menu__glyph {
+  width: 18px;
+  text-align: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.dock-menu__primary {
+  font-weight: 500;
+}
+
+/* Sessions sidebar: the per-project pipeline chain strip. */
+.ss-pipeline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 5px 10px 7px 26px;
+}
+
+.ss-pipeline__seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ss-pipeline__arrow {
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.ss-pipeline__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 130px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.ss-pipeline__chip:hover {
+  color: var(--text);
+  background: var(--panel-header);
+}
+
+.ss-pipeline__chip.is-working {
+  border-color: var(--success);
+}
+
+.ss-pipeline__chip.is-blocked {
+  border-color: var(--warn);
+}
+
+.ss-pipeline__glyph {
+  font-size: 10px;
+}
+
+.ss-pipeline__name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ss-pipeline__count {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 7px;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 0 5px;
+  line-height: 14px;
+}
+
+/* Pipeline ports: the Weave ring look — dark core, colored 2px ring, grows on hover. */
+.pipe-handle.react-flow__handle {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--canvas-bg);
+  border: 2px solid var(--accent);
+  transition: transform 0.12s ease;
+}
+
+.pipe-handle.react-flow__handle:hover {
+  transform: scale(1.2);
+}
+
+.pipe-handle.react-flow__handle-left {
+  left: -7px;
+}
+
+.pipe-handle.react-flow__handle-right {
+  right: -7px;
+}
+
+.pipe-handle--alt.react-flow__handle {
+  border-color: var(--warn);
+  bottom: -7px;
+}
+
 /* ============================== Setup tour (onboarding) ==============================
    First-run flow: full-screen overlay, one animated scene + one decision per step.
    All motion is CSS keyframes (no deps); prefers-reduced-motion freezes every scene. */

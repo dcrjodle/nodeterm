@@ -6,6 +6,7 @@ import type {
   CanvasNodeState,
   Project,
   ProjectKanban,
+  ProjectPipeline,
   Viewport,
   Workspace
 } from '@shared/types'
@@ -68,6 +69,7 @@ interface ProjectsState {
   setDinoHighScore(id: string, score: number): void
   /** Replaces the project's kanban board (the UI computes the next board via lib/kanban). */
   setProjectKanban(id: string, kanban: ProjectKanban): void
+  setProjectPipeline(id: string, pipeline: ProjectPipeline): void
   /** Writes the serialized canvas (nodes + viewport + bridge links + control ropes) back into a project. */
   commitCanvas(
     id: string,
@@ -311,6 +313,12 @@ export const useProjects = create<ProjectsState>((set, get) => ({
   setProjectKanban(id, kanban) {
     set((s) => ({
       projects: s.projects.map((p) => (p.id === id ? { ...p, kanban } : p))
+    }))
+  },
+
+  setProjectPipeline(id, pipeline) {
+    set((s) => ({
+      projects: s.projects.map((p) => (p.id === id ? { ...p, pipeline } : p))
     }))
   },
 
