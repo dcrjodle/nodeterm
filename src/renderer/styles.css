@@ -1123,7 +1123,10 @@ body,
 }
 
 /* Bridge link handles (Claude nodes): dots on the header row, on top of the node so they're
-   never buried under the terminal body. Subtle until you hover the node, then prominent. */
+   never buried under the terminal body. Subtle until you hover the node, then prominent.
+   Never set `transform` on a React Flow handle: the side classes (.react-flow__handle-left/right/
+   top/bottom) POSITION the dot with translate(±50%, ±50%), so any transform override replaces
+   that and shifts the dot away from the cursor mid-hover. Hover feedback is a ring, not a scale. */
 .react-flow__handle.bridge-handle {
   width: 13px;
   height: 13px;
@@ -1132,15 +1135,17 @@ body,
   box-shadow: 0 1px 4px rgba(0, 0, 0, calc(0.5 * var(--shadow-k)));
   opacity: 0.4;
   z-index: 20;
-  transition: opacity 0.12s ease, transform 0.12s ease;
+  transition: opacity 0.12s ease, box-shadow 0.12s ease;
 }
 .react-flow__node:hover .react-flow__handle.bridge-handle,
 .react-flow__node.selected .react-flow__handle.bridge-handle {
   opacity: 1;
 }
 .react-flow__handle.bridge-handle:hover {
-  transform: scale(1.6);
   opacity: 1;
+  box-shadow:
+    0 1px 4px rgba(0, 0, 0, calc(0.5 * var(--shadow-k))),
+    0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* Hover explanation for the bridge handles (CSS tooltip via the data-tip attribute). */
@@ -9764,18 +9769,24 @@ body,
   background: rgba(229, 72, 77, 0.12);
 }
 
-/* Pipeline ports: the Weave ring look — dark core, colored 2px ring, grows on hover. */
+/* Pipeline ports: the Weave ring look — dark core, colored 2px ring, soft glow on hover.
+   Same handle invariant as .bridge-handle above: no `transform` here — it would replace the
+   side classes' positioning translate and shift the port away from the cursor. */
 .pipe-handle.react-flow__handle {
   width: 12px;
   height: 12px;
   border-radius: 50%;
   background: var(--canvas-bg);
   border: 2px solid var(--accent);
-  transition: transform 0.12s ease;
+  transition: box-shadow 0.12s ease;
 }
 
 .pipe-handle.react-flow__handle:hover {
-  transform: scale(1.2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.pipe-handle--alt.react-flow__handle:hover {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent);
 }
 
 .pipe-handle.react-flow__handle-left {
