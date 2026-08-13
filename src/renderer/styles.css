@@ -1305,6 +1305,23 @@ body,
   background: currentColor;
 }
 
+/* ▶ START on an agent station whose CLI has not reported yet: a real button (the engine also
+   starts the CLI when an issue arrives — this is the manual head start), styled like the other
+   status chips but clickable. */
+.term-node__status--start {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px 7px;
+  cursor: pointer;
+  color: var(--accent-text);
+}
+
+.term-node__status--start:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 /* RUNNING matches the working spinner + node glow (clay #3ecf8e), not the base green. */
 .term-node__status--busy {
   color: #3ecf8e;
@@ -9789,6 +9806,31 @@ body,
 .pipe-handle--alt.react-flow__handle {
   border-color: var(--warn);
   bottom: -7px;
+}
+
+/* Config ports: assignment/sandbox → station wiring (`cfg-` edges). Muted ring so the config
+   plumbing reads quieter than the accent-colored issue chain. */
+.pipe-handle--cfg.react-flow__handle {
+  border-color: var(--muted);
+}
+
+.pipe-handle--cfg.react-flow__handle-top {
+  top: -7px;
+}
+
+/* Issue badges floated over an agent station's terminal (TerminalNode renders type 'agent').
+   A readout, not a control: pointer-events off so the terminal below stays fully usable. */
+.term-node__station-badges {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.term-node__station-badges .station__badges {
+  border-top: none;
+  padding: 0;
 }
 
 /* ============================== Setup tour (onboarding) ==============================

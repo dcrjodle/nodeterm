@@ -1,20 +1,19 @@
 import { useState } from 'react'
 import { Handle, NodeResizer, Position, useReactFlow, type NodeProps } from '@xyflow/react'
-import { AGENT_CONFIG, BUILTIN_AGENT_IDS, hasHooks, type AgentId } from '@shared/agents/config'
 import type { ConnectorService, DecisionRule } from '@shared/types'
 import type { CanvasNode } from '../state/workspace'
-import { useAgentStatus } from '../state/agentStatus'
 import { useProjects } from '../state/projects'
-import { useSettings } from '../state/settings'
-import { useSession } from '../session/session'
 import { advanceIssueManually, engineCtx, routeWaitingIssue } from '../state/pipeline'
 import { liveEdges, stationsOf } from '../lib/pipeline'
 import { flowToNodeStates } from '../state/workspace'
 
 /**
- * The three pipeline stations (Weave-style cards). Stations are CONFIG surfaces — the loop
- * engine (state/pipeline.ts) owns every side effect; nothing here spawns or writes to a pty.
- * All three share the pipe-in/pipe-out handle contract Canvas's onConnect routes on.
+ * The decision + connector pipeline stations (Weave-style cards) and the shared issue badges.
+ * Stations are CONFIG surfaces — the loop engine (state/pipeline.ts) owns every side effect;
+ * nothing here spawns or writes to a pty. The AGENT station is no longer a card: it is a real
+ * terminal (TerminalNode renders node type 'agent' with pipe handles + these badges), so its
+ * component lives there. All stations share the pipe-in/pipe-out handle contract Canvas's
+ * onConnect routes on.
  */
 
 const STATION_GLYPHS = { agent: '▣', decision: '◇', connector: '⬡' } as const
@@ -38,7 +37,7 @@ function useStationIssueSig(id: string): { queued: number; active: number; waiti
   return { queued, active, waiting }
 }
 
-function IssueBadges({ nodeId }: { nodeId: string }): React.JSX.Element | null {
+export function IssueBadges({ nodeId }: { nodeId: string }): React.JSX.Element | null {
   const { queued, active, waiting } = useStationIssueSig(nodeId)
   if (!queued && !active && !waiting) return null
   return (
@@ -133,103 +132,6 @@ function StationShell({
       {children}
       <IssueBadges nodeId={id} />
     </div>
-  )
-}
-
-// ---- Agent station ----------------------------------------------------------------------------
-
-const AGENT_STATE_LABEL: Record<string, string> = {
-  working: 'Running',
-  waiting: 'Needs you',
-  blocked: 'Needs you',
-  done: 'Idle'
-}
-
-export function AgentStationNode({ id, data, selected }: NodeProps<CanvasNode>): React.JSX.Element {
-  const { updateNodeData } = useReactFlow()
-  const { api } = useSession()
-  const state = useAgentStatus((s) => s.byId[id]?.state)
-  const customAgents = useSettings((s) => s.settings.customAgents ?? [])
-  const agentId = (data.agentId as string) ?? 'claude'
-  const cwd = (data.cwd as string) ?? ''
-  const shortCwd = cwd ? cwd.replace(/^\/(Users|home)\/[^/]+/, '~') : 'Project folder'
-
-  const pickFolder = async (): Promise<void> => {
-    const dir = await api.dialog.selectFolder()
-    if (dir) updateNodeData(id, { cwd: dir })
-  }
-
-  return (
-    <StationShell
-      id={id}
-      kind="agent"
-      data={data}
-      selected={selected}
-      minWidth={280}
-      minHeight={260}
-      headerExtra={
-        <span className={`station__state station__state--${state ?? 'off'}`}>
-          {AGENT_STATE_LABEL[state ?? ''] ?? 'Not started'}
-        </span>
-      }
-    >
-      <div className="station__body nodrag">
-        <div className="station__block">
-          <label className="station__label">cli</label>
-          <select
-            className="station__select"
-            value={agentId}
-            onChange={(e) => updateNodeData(id, { agentId: e.target.value as AgentId })}
-          >
-            {BUILTIN_AGENT_IDS.map((a) => (
-              <option key={a} value={a}>
-                {AGENT_CONFIG[a]?.label ?? a}
-              </option>
-            ))}
-            {customAgents.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label || c.id}
-              </option>
-            ))}
-          </select>
-          {!hasHooks(agentId as AgentId) && (
-            <div className="station__hint">
-              No status hooks — issues will not auto-advance past this station; use the card's
-              Advance button.
-            </div>
-          )}
-        </div>
-        <div className="station__block station__block--grow">
-          <label className="station__label">assignment</label>
-          <textarea
-            className="station__text nowheel"
-            placeholder="Standing instructions injected with every issue that reaches this agent…"
-            value={(data.assignment as string) ?? ''}
-            onChange={(e) => updateNodeData(id, { assignment: e.target.value })}
-          />
-        </div>
-        <div className="station__block">
-          <label className="station__label">sandbox</label>
-          <div className="station__row">
-            <span className="station__path" title={cwd || 'Uses the project folder'}>
-              {shortCwd}
-            </span>
-            <button className="station__btn" onClick={() => void pickFolder()}>
-              Browse
-            </button>
-            <button
-              className="station__btn"
-              title="Open a terminal attached to this station's session"
-              onClick={() =>
-                window.dispatchEvent(new CustomEvent('nodeterm:watch-station', { detail: { nodeId: id } }))
-              }
-            >
-              Watch
-            </button>
-          </div>
-        </div>
-      </div>
-    </StationShell>
   )
 }
 

@@ -147,6 +147,9 @@ import { hintLabel } from '@shared/platform-utils'
 import { ColumnPill } from '../components/kanban/ColumnPill'
 import { BoardLogPanel } from '../components/kanban/BoardLogPanel'
 import { AgentMascot } from './AgentMascot'
+import { IssueBadges } from './StationNodes'
+import { engineCtx, startStationAgent } from '../state/pipeline'
+import { markMountLaunch } from '../terminal/launch-ledger'
 
 /** How long a remote terminal waits for its project's ControlMaster before giving up and showing
  *  the offline overlay. Sized for the SLOW-but-fine case (a cold app load whose connect is still
@@ -828,6 +831,12 @@ export function TerminalNode({
   data,
   selected,
   parentId,
+  // The React Flow node type. 'terminal' for ordinary terminals; 'agent' marks a pipeline AGENT
+  // STATION — the same terminal machinery (pty, xterm, parking, agent badges, cold restore) with
+  // station chrome layered on: pipe handles instead of link handles, issue badges, and a Start
+  // action that hands the CLI launch to the loop engine (which resolves the connected
+  // assignment/sandbox satellites at launch time).
+  type,
   // True for the whole of a node drag, flipped synchronously by React Flow at gesture start and
   // end. Read only by the glyphgrid participation decision below (a dragged terminal is about to
   // be above other nodes, so it renders its OWN opaque pixels for the gesture); every other
@@ -1222,6 +1231,8 @@ export function TerminalNode({
     !remoteSession &&
     (data.cwd as string | undefined) !== parentWtPath
   const status = useAgentStatus((s) => s.byId[id])
+  /** Pipeline agent station? (React Flow type 'agent' — see the `type` prop note above.) */
+  const isStation = type === 'agent'
   // Transient, per-launch: what this node's Codex launcher reported it actually got. Undefined for
   // every non-codex node and for a codex node whose launcher never spoke.
   const codexIdentity = useCodexIdentity((s) => s.byId[id])
@@ -2668,6 +2679,9 @@ export function TerminalNode({
         // Run a one-shot command on first open (e.g. "gh auth login" or the agent CLI), then
         // forget it.
         if (data.initialCommand) {
+          // Marked in the launch ledger so the loop engine defers to this write instead of
+          // typing its own launch line at the same shell (agent stations; harmless otherwise).
+          markMountLaunch(id)
           writeWhenShellReady(data.initialCommand)
           updateNodeData(id, { initialCommand: undefined })
         } else if (fresh && agentId && canResume(agentId)) {
@@ -2685,25 +2699,35 @@ export function TerminalNode({
           // relaunched empty while their transcripts sat on disk, unreachable.
           const st = useAgentStatus.getState().byId[id]
           const priorId = st?.sessionId || data.agentSessionId
-          // Shared-identity agents resume THROUGH their launcher, so the cold-restored node
-          // re-claims its own thread instead of joining as an anonymous client. `data.ssh` is what
-          // keeps a remote node on the bare command (no launcher on the host).
-          const shared = codexSharedIdentity(data.ssh || data.sshRemoteTmux)
-          const base =
-            (priorId && resumeCommand(agentId, priorId, shared)) ||
-            (agentConfig(agentId) &&
-              agentLaunchProgram(agentId, agentConfig(agentId)!.launchCmd, shared))
-          // Re-resolve the mode at relaunch: it's a property of how a session is launched, not
-          // a persisted property of the node, so the current setting wins after a reboot. `base`
-          // is always freshly built here — never a command string read back from node data — so
-          // it can never end up double-flagged. Awaited (not the sync `activePermissionMode`)
-          // because this fires on mount: right after a machine reboot it can beat the CLI version
-          // probe, and an unanswered probe would conservatively drop `auto`.
-          // Gated on THIS node's agent: claude's `auto` version gate must not decide what a grok
-          // (or any other permission-mode-capable agent's) relaunch is flagged with.
-          const cmd =
-            base && withPermissionMode(base, agentId, await ensureActivePermissionMode(agentId))
-          if (cmd) writeWhenShellReady(cmd) // same shell-startup race as initialCommand
+          // An agent STATION with no session id has never launched: its first launch belongs to
+          // the loop engine (▶ Start / first issue), which resolves the connected assignment +
+          // sandbox at that moment — a bare launch here would start Claude with neither. With a
+          // prior id the ordinary resume below is exactly right (the conversation already
+          // carries its assignment).
+          if (!(isStation && !priorId)) {
+            // Shared-identity agents resume THROUGH their launcher, so the cold-restored node
+            // re-claims its own thread instead of joining as an anonymous client. `data.ssh` is what
+            // keeps a remote node on the bare command (no launcher on the host).
+            const shared = codexSharedIdentity(data.ssh || data.sshRemoteTmux)
+            const base =
+              (priorId && resumeCommand(agentId, priorId, shared)) ||
+              (agentConfig(agentId) &&
+                agentLaunchProgram(agentId, agentConfig(agentId)!.launchCmd, shared))
+            // Re-resolve the mode at relaunch: it's a property of how a session is launched, not
+            // a persisted property of the node, so the current setting wins after a reboot. `base`
+            // is always freshly built here — never a command string read back from node data — so
+            // it can never end up double-flagged. Awaited (not the sync `activePermissionMode`)
+            // because this fires on mount: right after a machine reboot it can beat the CLI version
+            // probe, and an unanswered probe would conservatively drop `auto`.
+            // Gated on THIS node's agent: claude's `auto` version gate must not decide what a grok
+            // (or any other permission-mode-capable agent's) relaunch is flagged with.
+            const cmd =
+              base && withPermissionMode(base, agentId, await ensureActivePermissionMode(agentId))
+            if (cmd) {
+              markMountLaunch(id) // engine defers to this write (see launch-ledger)
+              writeWhenShellReady(cmd) // same shell-startup race as initialCommand
+            }
+          }
         }
       })
       .catch((err: unknown) => {
@@ -3860,7 +3884,7 @@ export function TerminalNode({
         isUnread ? ' unread' : ''
       }${status?.state === 'working' ? ' working' : ''}${
         status?.state === 'waiting' || status?.state === 'blocked' ? ' attention' : ''
-      }${glyphMounted ? ' term-node--glyphgrid' : ''}`}
+      }${glyphMounted ? ' term-node--glyphgrid' : ''}${isStation ? ' term-node--station' : ''}`}
       ref={rootRef}
       style={{ borderTopColor: data.color }}
       onMouseEnter={() => (hoveredRef.current = true)}
@@ -3883,31 +3907,45 @@ export function TerminalNode({
         isConnectable={false}
         style={{ opacity: 0, pointerEvents: 'none', top: 0 }}
       />
-      {/* Link handles (all terminal nodes): drag right→left to link. Between two context-capable
-          (Claude) nodes this shares context; from a sticky note it attaches the note as context.
-          Vertically centered on the side edges; raised above the body so they're never buried. */}
-      <Handle
-        id="link-out"
-        type="source"
-        position={Position.Right}
-        className="bridge-handle bridge-handle--out"
-        data-tip={
-          contextLinkCapable
-            ? "Link out — drag to another Claude node so they can read each other's context"
-            : 'Link out — drag to a sticky note to attach it as context'
-        }
-      />
-      <Handle
-        id="link-in"
-        type="target"
-        position={Position.Left}
-        className="bridge-handle bridge-handle--in"
-        data-tip={
-          contextLinkCapable
-            ? 'Link in — drop a link here to share context with this Claude session'
-            : 'Link in — drop a sticky note link here to attach it as context'
-        }
-      />
+      {isStation ? (
+        <>
+          {/* Pipeline ports (agent station): the chain flows in on the left, out on the right —
+              the same pipe-in/pipe-out contract the decision/connector cards carry — plus the
+              top `cfg-in` port assignment/sandbox satellites connect to. These REPLACE the link
+              handles: one connective story per node kind. */}
+          <Handle id="pipe-in" type="target" position={Position.Left} className="pipe-handle pipe-handle--in" />
+          <Handle id="pipe-out" type="source" position={Position.Right} className="pipe-handle pipe-handle--out" />
+          <Handle id="cfg-in" type="target" position={Position.Top} className="pipe-handle pipe-handle--cfg" />
+        </>
+      ) : (
+        <>
+          {/* Link handles (all terminal nodes): drag right→left to link. Between two context-capable
+              (Claude) nodes this shares context; from a sticky note it attaches the note as context.
+              Vertically centered on the side edges; raised above the body so they're never buried. */}
+          <Handle
+            id="link-out"
+            type="source"
+            position={Position.Right}
+            className="bridge-handle bridge-handle--out"
+            data-tip={
+              contextLinkCapable
+                ? "Link out — drag to another Claude node so they can read each other's context"
+                : 'Link out — drag to a sticky note to attach it as context'
+            }
+          />
+          <Handle
+            id="link-in"
+            type="target"
+            position={Position.Left}
+            className="bridge-handle bridge-handle--in"
+            data-tip={
+              contextLinkCapable
+                ? 'Link in — drop a link here to share context with this Claude session'
+                : 'Link in — drop a sticky note link here to attach it as context'
+            }
+          />
+        </>
+      )}
 
       <div className="term-node__header">
         <button className="term-node__collapse" title={collapsed ? 'Expand' : 'Collapse'} onClick={toggleCollapse}>
@@ -4013,6 +4051,21 @@ export function TerminalNode({
         {showUsage && <ContextMeter sessionId={status?.sessionId ?? null} />}
         {/* Who else is in this node. Subscribes to presence itself — see PresenceChips. */}
         <PresenceChips nodeId={id} />
+        {/* Station whose CLI has not reported yet: the pane is (still) a shell. The engine
+            launches Claude when the first issue arrives; this chip is the manual head start —
+            same launch path, same per-station lock, so the two can never double-launch. */}
+        {isStation && !status?.state && (
+          <button
+            className="term-node__status term-node__status--start nodrag"
+            title="Launch Claude in this station now (the loop engine also starts it when an issue arrives)"
+            onClick={() => {
+              const ctx = engineCtx()
+              if (ctx) startStationAgent(ctx, id)
+            }}
+          >
+            ▶ START
+          </button>
+        )}
         {status?.state === 'working' && (
           <span className="term-node__status term-node__status--busy" title={`${agentLabel} is working`}>
             <AgentMascot agentId={agentId} />
@@ -4339,6 +4392,13 @@ export function TerminalNode({
             </div>
           ))}
       </div>
+      {/* Station chrome: queued/active/waiting counts for the issues at this station, floated
+          over the terminal's bottom-right (pointer-events: none — it is a readout, not a control). */}
+      {isStation && !collapsed && (
+        <div className="term-node__station-badges">
+          <IssueBadges nodeId={id} />
+        </div>
+      )}
     </div>
     {/* Board-log comments flyout — a SIBLING of the root (overflow:hidden would clip it),
         expanding to the node's right. Same feed/composer as the card modal's panel. */}

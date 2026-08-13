@@ -9,7 +9,7 @@ through them.**
 
 This fork of [eneskirca/nodeterm](https://github.com/eneskirca/nodeterm) turns the node-based
 terminal manager into a **loop-engineering factory**: three station kinds — **agent**
-(cli + assignment + sandbox), **decision** (deterministic keyword routing, with loops back),
+(a real Claude Code terminal), **decision** (deterministic keyword routing, with loops back),
 and **connector** (GitHub/Slack/Gmail context) — chain on the canvas, mirror as kanban columns,
 and **issues flow through the chain**, moving across the board as each agent finishes its turn.
 Everything underneath is still real terminals in tmux on an infinite pan/zoom canvas, restyled
@@ -46,12 +46,15 @@ after Figma Weave.
 A project's pipeline is drawn, not configured:
 
 1. **Chain stations on the canvas** — drag from a station's right port to the next station's
-   left port. An **agent** station holds three blocks: the *cli* it runs (Claude Code, Codex,
-   Gemini, or a custom CLI), a standing *assignment* (instructions injected with every issue),
-   and a *sandbox* (the folder its tmux-backed session works in). A **decision** station routes
-   issues by ordered `contains "keyword" → route` rules — `next`, `back` (that's the loop), or a
-   named branch — or waits for a manual call. A **connector** station contributes integration
-   context downstream (env var *names* only; secrets never leave your environment).
+   left port. An **agent** station IS a live terminal running **Claude Code** — you watch the
+   agent work right on the canvas. Its configuration is wired in from the outside: connect an
+   **assignment** card (standing instructions, delivered as context when the CLI starts) and a
+   **sandbox** card (the folder the CLI starts in; without one, the project folder) to the
+   station's top port — both are ordinary nodes you drag, position, and rewire. A **decision**
+   station routes issues by ordered `contains "keyword" → route` rules — `next`, `back` (that's
+   the loop), or a named branch — or waits for a manual call. A **connector** station
+   contributes integration context downstream (env var *names* only; secrets never leave your
+   environment).
 2. **Every station is a kanban column** (right-click to remove/add it). The board shows
    `Queue → stations → Done` above the session columns.
 3. **Queue issues** from the board's `+ Add issue`, the canvas right-click, or ⌘K. Each issue

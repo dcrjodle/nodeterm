@@ -1,11 +1,13 @@
 import {
   isPipelineKind,
+  isSatelliteKind,
   type CanvasNodeState,
   type ConnectorService,
   type DecisionRule,
   type PipelineEdge,
   type PipelineIssue,
-  type PipelineNodeKind
+  type PipelineNodeKind,
+  type PipelineSatelliteKind
 } from '@shared/types'
 
 /**
@@ -26,7 +28,9 @@ export interface Station {
   /** agent station: managed Claude account, resolved once at creation (immutable). */
   accountId?: string
   cwd?: string
-  assignment?: string
+  /** agent station: the session id nodeterm minted at the first CLI launch (persisted on the
+   *  node) — the engine's resume fallback when no hook ever delivered one. */
+  agentSessionId?: string
   criteria?: string
   rules?: DecisionRule[]
   decisionMode?: 'auto' | 'manual'
@@ -43,10 +47,12 @@ export function stationOf(n: CanvasNodeState): Station | null {
     kind: n.kind,
     title: n.title || 'Untitled',
     kanbanColumn: n.kanbanColumn !== false,
-    agentId: n.agentId,
+    // Agent stations always run Claude Code — a persisted pre-rework station that chose another
+    // CLI is coerced (the picker is gone; nodeStatesToFlow applies the same rule to node data).
+    agentId: n.kind === 'agent' ? 'claude' : n.agentId,
     accountId: n.accountId,
     cwd: n.cwd,
-    assignment: n.assignment,
+    agentSessionId: n.agentSessionId,
     criteria: n.criteria,
     rules: n.rules,
     decisionMode: n.decisionMode,
@@ -58,6 +64,75 @@ export function stationOf(n: CanvasNodeState): Station | null {
 
 export function stationsOf(nodes: CanvasNodeState[]): Station[] {
   return nodes.map(stationOf).filter((s): s is Station => s !== null)
+}
+
+/** A pipeline satellite — an `assignment` or `sandbox` card wired INTO an agent station by a
+ *  `cfg-` edge. Config only: never part of the chain, never a kanban column. */
+export interface Satellite {
+  id: string
+  kind: PipelineSatelliteKind
+  /** assignment: the standing instructions text. */
+  text?: string
+  /** sandbox: the folder the station's CLI starts in. */
+  cwd?: string
+}
+
+export function satelliteOf(n: CanvasNodeState): Satellite | null {
+  if (!isSatelliteKind(n.kind)) return null
+  return { id: n.id, kind: n.kind, text: n.text, cwd: n.cwd }
+}
+
+export function satellitesOf(nodes: CanvasNodeState[]): Satellite[] {
+  return nodes.map(satelliteOf).filter((s): s is Satellite => s !== null)
+}
+
+/** The satellites wired into `stationId`, in edge array order (= connect order). */
+export function satellitesInto(
+  stationId: string,
+  edges: PipelineEdge[],
+  satellites: Satellite[]
+): Satellite[] {
+  const byId = new Map(satellites.map((s) => [s.id, s]))
+  return edges
+    .filter((e) => e.to === stationId)
+    .map((e) => byId.get(e.from))
+    .filter((s): s is Satellite => s !== undefined)
+}
+
+/** The folder a station's CLI starts in: the LAST connected sandbox with a folder wins
+ *  (onConnect keeps one sandbox edge per station, so "last" only breaks ties among stale data).
+ *  Undefined = no sandbox → the caller falls back to the project folder. */
+export function sandboxCwdFor(
+  stationId: string,
+  edges: PipelineEdge[],
+  satellites: Satellite[]
+): string | undefined {
+  const boxes = satellitesInto(stationId, edges, satellites).filter(
+    (s) => s.kind === 'sandbox' && s.cwd?.trim()
+  )
+  return boxes.length ? boxes[boxes.length - 1].cwd : undefined
+}
+
+/** A station's standing assignment: every connected assignment card's text, in connect order. */
+export function assignmentTextFor(
+  stationId: string,
+  edges: PipelineEdge[],
+  satellites: Satellite[]
+): string {
+  return satellitesInto(stationId, edges, satellites)
+    .filter((s) => s.kind === 'assignment')
+    .map((s) => s.text?.trim() ?? '')
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+/** The one deterministic message that carries a station's assignment into its CLI. Used as the
+ *  launch's initial prompt (fresh start) and as the one-shot push when an assignment card is
+ *  connected to an already-running station. Empty assignment → empty string (nothing owed). */
+export function composeAssignmentPrompt(text: string): string {
+  const t = text.trim()
+  if (!t) return ''
+  return `Standing assignment for this station (context for every issue that follows — acknowledge briefly and wait for work):\n\n${t}`
 }
 
 /** Drops edges whose endpoints are no longer pipeline stations (deleted / re-kinded nodes). */
@@ -258,7 +333,9 @@ export function connectorContextLine(c: Station): string {
 }
 
 /** The ONE deterministic prompt an agent station receives per issue. Composition, not
- *  generation: same issue + same station config = byte-identical prompt. */
+ *  generation: same issue + same station config = byte-identical prompt. The station's standing
+ *  assignment is deliberately NOT here — it is delivered once, when the CLI starts
+ *  (`composeAssignmentPrompt`), so every issue prompt stays lean. */
 export function composeIssuePrompt(
   issue: PipelineIssue,
   station: Station,
@@ -267,7 +344,6 @@ export function composeIssuePrompt(
   const parts: string[] = [`[nodeterm issue ${issue.id.slice(-6)}] ${issue.title}`]
   if (issue.body.trim()) parts.push(issue.body.trim())
   if (issue.notes.trim()) parts.push(`Notes so far:\n${issue.notes.trim()}`)
-  if (station.assignment?.trim()) parts.push(`Assignment: ${station.assignment.trim()}`)
   if (connectors.length)
     parts.push(`Available connectors:\n${connectors.map(connectorContextLine).join('\n')}`)
   parts.push('When you are done, summarize what you did in one line.')

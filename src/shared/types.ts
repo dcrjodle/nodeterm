@@ -173,17 +173,27 @@ export interface RecycledInfo {
 }
 
 // 'subagent' and 'loop' are render-only (ephemeral hook-driven viz) and never persisted.
-export type NodeKind = 'terminal' | 'sticky' | 'group' | 'editor' | 'diff' | 'video' | 'web' | 'browser' | 'subagent' | 'loop' | 'dino' | 'agent' | 'decision' | 'connector'
+export type NodeKind = 'terminal' | 'sticky' | 'group' | 'editor' | 'diff' | 'video' | 'web' | 'browser' | 'subagent' | 'loop' | 'dino' | 'agent' | 'decision' | 'connector' | 'assignment' | 'sandbox'
 
 /** The three pipeline station kinds — the deterministic loop-factory chain
- *  (docs/superpowers/specs/2026-08-13-weave-loop-factory.md). `agent` runs a CLI agent in a
- *  sandbox cwd, `decision` routes issues, `connector` contributes integration context. */
+ *  (docs/superpowers/specs/2026-08-13-weave-loop-factory.md). `agent` runs the Claude CLI in an
+ *  embedded terminal, `decision` routes issues, `connector` contributes integration context. */
 export type PipelineNodeKind = 'agent' | 'decision' | 'connector'
 
 export const PIPELINE_NODE_KINDS: readonly PipelineNodeKind[] = ['agent', 'decision', 'connector']
 
 export function isPipelineKind(kind: string | undefined): kind is PipelineNodeKind {
   return kind === 'agent' || kind === 'decision' || kind === 'connector'
+}
+
+/** Pipeline SATELLITE kinds — config cards wired INTO an agent station by a `cfg-` edge, never
+ *  part of the chain itself: `assignment` (standing instructions, injected as context when the
+ *  station's CLI starts) and `sandbox` (the folder the CLI starts in; without one the station
+ *  uses the project folder). They are not stations: no kanban column, no issue queue. */
+export type PipelineSatelliteKind = 'assignment' | 'sandbox'
+
+export function isSatelliteKind(kind: string | undefined): kind is PipelineSatelliteKind {
+  return kind === 'assignment' || kind === 'sandbox'
 }
 
 /** One deterministic routing rule on a decision station: first case-insensitive substring match
