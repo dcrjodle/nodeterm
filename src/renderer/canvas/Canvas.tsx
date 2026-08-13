@@ -193,6 +193,7 @@ import { useProjects } from '../state/projects'
 import {
   addIssue as pipelineAddIssue,
   prunePipeline,
+  releaseStationClient,
   scheduleTick,
   setEngineCtx,
   usePipelineFx,
@@ -3480,29 +3481,55 @@ export function Canvas() {
     [setNodes, markDirty, emptyNodePos, parentInto]
   )
 
+  /** Pipeline stations are local-only in v1: the engine spawns their sessions without
+   *  `sshRemote`, so on an SSH project a station would become a LOCAL shell in the remote cwd —
+   *  the exact class the "a remote node is NEVER spawned locally" invariant forbids. Every
+   *  creation surface disables/omits on this reason; the engine refuses too (defense in depth). */
+  const stationSshReason = isSshProject
+    ? 'Pipeline stations are local-only in v1 — not available on SSH projects.'
+    : null
+
   const addAgentStation = useCallback(
     (center?: { x: number; y: number }) => {
-      const cwd = useProjects.getState().getProject(activeProjectId)?.cwd
-      setNodes((ns) => [...ns, createAgentStationNode(ns.filter((n) => n.type === 'agent').length, 'claude', center ?? emptyNodePos(), cwd)])
+      if (isSshProject) return
+      const project = useProjects.getState().getProject(activeProjectId)
+      // Same account contract as addAgentNode: project default applies, resolved once here.
+      const account = resolveNewNodeAccount(
+        undefined,
+        project,
+        useSettings.getState().settings.claudeAccounts
+      )
+      setNodes((ns) => [
+        ...ns,
+        createAgentStationNode(
+          ns.filter((n) => n.type === 'agent').length,
+          'claude',
+          center ?? emptyNodePos(),
+          project?.cwd,
+          account
+        )
+      ])
       markDirty()
     },
-    [setNodes, markDirty, emptyNodePos, activeProjectId]
+    [setNodes, markDirty, emptyNodePos, activeProjectId, isSshProject]
   )
 
   const addDecisionStation = useCallback(
     (center?: { x: number; y: number }) => {
+      if (isSshProject) return
       setNodes((ns) => [...ns, createDecisionNode(ns.filter((n) => n.type === 'decision').length, center ?? emptyNodePos())])
       markDirty()
     },
-    [setNodes, markDirty, emptyNodePos]
+    [setNodes, markDirty, emptyNodePos, isSshProject]
   )
 
   const addConnectorStation = useCallback(
     (center?: { x: number; y: number }) => {
+      if (isSshProject) return
       setNodes((ns) => [...ns, createConnectorNode(ns.filter((n) => n.type === 'connector').length, 'github', center ?? emptyNodePos())])
       markDirty()
     },
-    [setNodes, markDirty, emptyNodePos]
+    [setNodes, markDirty, emptyNodePos, isSshProject]
   )
 
   const addIssueViaPrompt = useCallback(async () => {
@@ -3904,6 +3931,14 @@ export function Canvas() {
         if (n.type === 'terminal')
           disposeTerminalOnUnmount(sessionForProject(useProjects.getState().activeProjectId ?? '').id, n.id)
         if (n.type === 'terminal') transport.destroy(n.id)
+        // Agent stations spawn engine-owned sessions under the same persistKey = node id
+        // contract; a deleted station must end its session like a deleted terminal — and the
+        // engine's background client must let go FIRST, or the dead session stays attached
+        // (an attached session is invisible to the reaper). No-op for never-spawned stations.
+        if (n.type === 'agent') {
+          releaseStationClient(n.id)
+          transport.destroy(n.id)
+        }
         // Permanent deletion → drop the node's persisted agent status (sessionId/session/
         // unread/loop). Node unmount no longer does this, so deletion must. The loop card's
         // UI overrides live in agentNodes and are skipped by unmount's clearForParent.
@@ -3953,6 +3988,17 @@ export function Canvas() {
     },
     [setNodes, markDirty, refreshWorktreeStore, releaseWorktreeBinding]
   )
+
+  // Station × routes here (not React Flow's deleteElements) so the delete runs the full
+  // cleanup above: destroy the spawned session, release the engine's client, drop status.
+  useEffect(() => {
+    const onDelete = (e: Event): void => {
+      const nodeId = (e as CustomEvent<{ nodeId?: string }>).detail?.nodeId
+      if (nodeId) deleteNodes([nodeId])
+    }
+    window.addEventListener('nodeterm:delete-station', onDelete)
+    return () => window.removeEventListener('nodeterm:delete-station', onDelete)
+  }, [deleteNodes])
 
   // When an account is removed in Settings, patch the ACTIVE project's live nodes (the projects
   // store only holds the other projects' serialized copies). The account's login node is
@@ -5222,31 +5268,32 @@ export function Canvas() {
       ...(isHidden('duplicate', hidden)
         ? []
         : ([
-            { label: 'Duplicate', icon: <IconDuplicate />, onClick: () => duplicateNodes(ids, at) },
-            ...(ids.length === 1 && isPipelineKind(nodesRef.current.find((n) => n.id === ids[0])?.type)
-              ? [
-                  {
-                    label:
-                      nodesRef.current.find((n) => n.id === ids[0])?.data.kanbanColumn === false
-                        ? 'Add kanban column'
-                        : 'Remove kanban column',
-                    icon: <IconDuplicate />,
-                    onClick: () => {
-                      const node = nodesRef.current.find((n) => n.id === ids[0])
-                      if (!node) return
-                      setNodes((ns) =>
-                        ns.map((n) =>
-                          n.id === ids[0]
-                            ? { ...n, data: { ...n.data, kanbanColumn: n.data.kanbanColumn === false } }
-                            : n
-                        )
-                      )
-                      markDirty()
-                    }
-                  }
-                ]
-              : [])
+            { label: 'Duplicate', icon: <IconDuplicate />, onClick: () => duplicateNodes(ids, at) }
           ] as MenuItem[])),
+      // Station kanban-column toggle: NOT under any hide-gate — `isHidden` only answers for ids
+      // in its inventory, and bundling this under 'duplicate' made hiding Duplicate silently
+      // take the toggle with it.
+      ...(ids.length === 1 && isPipelineKind(nodesRef.current.find((n) => n.id === ids[0])?.type)
+        ? ([
+            {
+              label:
+                nodesRef.current.find((n) => n.id === ids[0])?.data.kanbanColumn === false
+                  ? 'Add kanban column'
+                  : 'Remove kanban column',
+              icon: <IconDuplicate />,
+              onClick: () => {
+                setNodes((ns) =>
+                  ns.map((n) =>
+                    n.id === ids[0]
+                      ? { ...n, data: { ...n.data, kanbanColumn: n.data.kanbanColumn === false } }
+                      : n
+                  )
+                )
+                markDirty()
+              }
+            }
+          ] as MenuItem[])
+        : []),
       ...(ids.length === 1 && (() => {
         const a = agentIdOf(ids[0])
         return !!a && canBranch(a)
@@ -5512,9 +5559,9 @@ export function Canvas() {
           onClick: () => addTerminal(at, undefined, groupId)
         },
         ...agentCreationItems(at, groupId),
-        { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at) },
-        { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at) },
-        { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at) },
+        { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+        { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+        { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
         { label: 'New issue…', icon: <IconNote />, onClick: () => void addIssueViaPrompt() },
         { label: 'New sticky note', icon: <IconNote />, onClick: () => addSticky(at, groupId) },
         { type: 'separator' },
@@ -5617,9 +5664,9 @@ export function Canvas() {
           { type: 'separator' },
           // Content nodes.
           { label: 'New browser', icon: <IconRemote />, onClick: () => addBrowser(at) },
-          { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at) },
-          { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at) },
-          { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at) },
+          { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+          { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
+          { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at), ...(stationSshReason ? { disabled: true, hint: stationSshReason } : {}) },
           { label: 'New issue…', icon: <IconNote />, onClick: () => void addIssueViaPrompt() },
           { label: 'New sticky note', icon: <IconNote />, onClick: () => addSticky(at) },
           { label: 'New dino game', icon: <IconDino />, onClick: () => addDino(at) },
@@ -7282,6 +7329,7 @@ export function Canvas() {
             deleteNodes([id])
           } else {
             disposeTerminalOnUnmount(sessionForProject(projectId).id, id) // node may be parked from the project switch
+            releaseStationClient(id) // agent stations only; no-op for everything else
             transport.destroy(id)
             useAgentStatus.getState().remove(id)
             useProjects.getState().removeNode(projectId, id)
@@ -8226,6 +8274,11 @@ export function Canvas() {
           disposeTerminalOnUnmount(sessionForProject(id).id, n.id) // may be parked from a recent switch away
           transport.destroy(n.id)
         }
+        // Agent stations run engine-spawned sessions under the same persistKey contract.
+        if (n.kind === 'agent') {
+          releaseStationClient(n.id)
+          transport.destroy(n.id)
+        }
         useAgentStatus.getState().remove(n.id)
       })
       // SSH project: the per-node `transport.destroy` above only ends the REMOTE session for
@@ -8305,9 +8358,15 @@ export function Canvas() {
             run: () => addAgentNode('claude', undefined, undefined, a.id)
           })
         ),
-      { id: 'new-station', label: 'New agent station', icon: <IconNote />, run: () => addAgentStation() },
-      { id: 'new-decision', label: 'New decision station', icon: <IconNote />, run: () => addDecisionStation() },
-      { id: 'new-connector', label: 'New connector station', icon: <IconNote />, run: () => addConnectorStation() },
+      // Omitted (not disabled) on SSH projects — the palette surfaces every row as a search
+      // result, so a disabled entry would read as broken (the sshAccountsHint rule).
+      ...(stationSshReason
+        ? []
+        : [
+            { id: 'new-station', label: 'New agent station', icon: <IconNote />, run: () => addAgentStation() },
+            { id: 'new-decision', label: 'New decision station', icon: <IconNote />, run: () => addDecisionStation() },
+            { id: 'new-connector', label: 'New connector station', icon: <IconNote />, run: () => addConnectorStation() }
+          ]),
       { id: 'new-issue', label: 'New issue (pipeline)', icon: <IconNote />, run: () => void addIssueViaPrompt() },
       { id: 'new-sticky', label: 'New sticky note', icon: <IconNote />, run: () => addSticky() },
       { id: 'new-dino', label: 'New dino game', icon: <IconDino />, run: () => addDino() },
@@ -9254,6 +9313,7 @@ export function Canvas() {
         onAddStation={() => addAgentStation()}
         onAddDecision={() => addDecisionStation()}
         onAddConnector={() => addConnectorStation()}
+        stationsDisabledReason={stationSshReason}
         dirty={dirty}
         zoomPct={zoomPct}
         canUndo={pastRef.current.length > 0}

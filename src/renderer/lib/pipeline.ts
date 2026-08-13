@@ -23,6 +23,8 @@ export interface Station {
   /** Mirrored as a kanban column? Default true; the node right-click toggles it. */
   kanbanColumn: boolean
   agentId?: string
+  /** agent station: managed Claude account, resolved once at creation (immutable). */
+  accountId?: string
   cwd?: string
   assignment?: string
   criteria?: string
@@ -42,6 +44,7 @@ export function stationOf(n: CanvasNodeState): Station | null {
     title: n.title || 'Untitled',
     kanbanColumn: n.kanbanColumn !== false,
     agentId: n.agentId,
+    accountId: n.accountId,
     cwd: n.cwd,
     assignment: n.assignment,
     criteria: n.criteria,

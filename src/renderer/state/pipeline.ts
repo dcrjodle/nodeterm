@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { NodeTerminalApi, PipelineIssue, ProjectPipeline } from '@shared/types'
-import { resumeCommand, type AgentId } from '@shared/agents/config'
+import { hasHooks, resumeCommand, type AgentId } from '@shared/agents/config'
 import { LocalTransport } from '../terminal/local-transport'
 import { deliverCommand } from '../terminal/command-delivery'
 import {
@@ -14,6 +14,7 @@ import {
   newIssue,
   nextEdge,
   resolveDecision,
+  stationsOf,
   upstreamConnectors,
   type Station
 } from '../lib/pipeline'
@@ -96,6 +97,9 @@ const injecting = new Set<string>()
 /** Dwell timers per issue so decisions/connectors advance once, visibly. */
 const dwellTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
+/** Deliberately BROADER than shared/agents/pane's `isShellCommand` (it excludes nu/pwsh by
+ *  design for the restart flow): here "looks like a shell" gates whether the engine may TYPE
+ *  into the pane, and over-matching refuses an injection — the safe direction. */
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'tcsh', 'csh', 'nu', 'pwsh', 'powershell'])
 
 const DECISION_DWELL_MS = 450
@@ -133,7 +137,8 @@ function appendNote(i: PipelineIssue, note: string): PipelineIssue {
 // ---- public actions --------------------------------------------------------------------------
 
 /** Creates an issue. With `atNodeId` it queues at that station; otherwise at the chain's first
- *  station; with no stations at all it sits in the Queue column until one exists. */
+ *  station. With no stations at all it PARKS in the Queue column — Queue is a deliberate holding
+ *  pen (issues moved there by hand stay put), so entering a later-built chain is a manual drag. */
 export function addIssue(
   ctx: EngineCtx,
   fields: { title: string; body?: string; atNodeId?: string }
@@ -158,9 +163,27 @@ export function updateIssue(
 
 export function deleteIssue(ctx: EngineCtx, issueId: string): void {
   const p = pipelineOf(ctx.projectId)
+  clearDwell(issueId)
   injecting.delete(issueId)
   for (const [nodeId, wait] of awaitTurn) if (wait.issueId === issueId) awaitTurn.delete(nodeId)
   writePipeline(ctx.projectId, { ...p, issues: p.issues.filter((i) => i.id !== issueId) })
+}
+
+/** Permanent station delete (Canvas): detach our background client and drop every engine hold
+ *  for the node. Canvas destroys the tmux session itself (`transport.destroy`, the terminal-node
+ *  contract) — this only releases what the ENGINE owns, so nothing keeps the dead session
+ *  attached (an attached session is invisible to the reaper). No-op for nodes we never spawned. */
+export function releaseStationClient(nodeId: string): void {
+  const c = stationClients.get(nodeId)
+  if (c) {
+    try {
+      c.transport.kill(c.sessionId)
+    } catch {
+      // Already dead — the session is being destroyed either way.
+    }
+    stationClients.delete(nodeId)
+  }
+  awaitTurn.delete(nodeId)
 }
 
 /** A human move (kanban drag, issue-card action): to a station, to 'done', or back to 'queue'.
@@ -270,6 +293,16 @@ function tick(ctx: EngineCtx): void {
     if (!queue.length) continue
     // One issue at a time per station: an active/waiting head blocks the rest.
     const head = queue[0]
+    // Self-heal: `active` is engine-held state, but the holds (injecting/awaitTurn/dwell) are
+    // in-memory — an app restart or a project switch mid-turn loses them, and an active head
+    // with no holder would block its station FOREVER (tick only starts `queued` heads). An
+    // orphaned active issue re-queues so the engine re-injects; a duplicate turn is visible
+    // and recoverable, a silently dead station is neither.
+    if (head.status === 'active' && !engineHolds(head.id, st.id)) {
+      patchIssue(ctx.projectId, head.id, (i) => ({ ...i, status: 'queued' }))
+      scheduleTick(ctx)
+      continue
+    }
     if (head.status !== 'queued') continue
     if (st.kind === 'agent') {
       if (!injecting.has(head.id)) void startAgentIssue(ctx, st, head)
@@ -279,6 +312,15 @@ function tick(ctx: EngineCtx): void {
       passConnector(ctx, st, head, edges)
     }
   }
+}
+
+/** Whether the engine currently OWNS this issue's `active` status (see the tick self-heal). */
+function engineHolds(issueId: string, stationId: string): boolean {
+  return (
+    injecting.has(issueId) ||
+    awaitTurn.get(stationId)?.issueId === issueId ||
+    dwellTimers.has(issueId)
+  )
 }
 
 function resolveBack(issue: PipelineIssue, currentId: string): string | undefined {
@@ -308,8 +350,23 @@ function advanceIssue(
   viaEdgeId: string | undefined,
   now: number
 ): void {
+  advanceIssueIn(ctx, ctx.projectId, issueId, toNodeId, route, viaEdgeId, now)
+}
+
+/** The projectId-explicit core: the hook-driven advance may fire for a project the user has
+ *  switched away from (the tmux session and its hooks don't pause with the tab), and the write
+ *  must land on the OWNING project's pipeline, never the active one's. */
+function advanceIssueIn(
+  ctx: EngineCtx,
+  projectId: string,
+  issueId: string,
+  toNodeId: string | undefined,
+  route: string,
+  viaEdgeId: string | undefined,
+  now: number
+): void {
   clearDwell(issueId)
-  patchIssue(ctx.projectId, issueId, (i) => {
+  patchIssue(projectId, issueId, (i) => {
     const released = releaseEngineHolds(i)
     if (toNodeId !== undefined && hopCount(released) >= MAX_ISSUE_HOPS) {
       return appendNote(
@@ -325,11 +382,31 @@ function advanceIssue(
 
 // ---- agent stations --------------------------------------------------------------------------
 
+const ENGINE_NOTES: Record<string, string> = {
+  'ssh-project':
+    '[engine] pipeline stations are local-only in v1 — this is an SSH project, so no local session was spawned. Run the pipeline from a local project.',
+  'agent-not-up':
+    '[engine] the agent CLI never came up in this session — a shell owns the pane, so the issue prompt was NOT injected (typed into a shell it would execute line by line). Check the cli is installed, then re-queue the card.'
+}
+
 async function startAgentIssue(ctx: EngineCtx, st: Station, issue: PipelineIssue): Promise<void> {
   injecting.add(issue.id)
   patchIssue(ctx.projectId, issue.id, (i) => ({ ...i, status: 'active' }))
   try {
+    // Local-only v1: spawning here without `sshRemote` would create a LOCAL session for an SSH
+    // project's remote cwd — the exact class the "a remote node is NEVER spawned locally"
+    // invariant forbids. Canvas disables station creation on SSH projects; this is the backstop.
+    if (useProjects.getState().getProject(ctx.projectId)?.ssh) throw new Error('ssh-project')
     await ensureAgentSession(ctx, st)
+    // Injection guard: the prompt is multi-line, and typed at a bare shell each line would
+    // EXECUTE (the note-push rule). A live pane owned by a shell refuses regardless of any
+    // stale status; an unknown pane with no status ever seen refuses too (fail-closed —
+    // `waitForAgentUp` resolves on timeout, so reaching this line proves nothing by itself).
+    const pane = await ctx.api.pty.paneCommand(st.id).catch(() => null)
+    const hasStatus = !!useAgentStatus.getState().byId[st.id]?.state
+    if ((pane && SHELLS.has(pane.toLowerCase())) || (!pane && !hasStatus)) {
+      throw new Error('agent-not-up')
+    }
     const p = pipelineOf(ctx.projectId)
     const stations = ctx.getStations()
     const prompt = composeIssuePrompt(
@@ -340,14 +417,12 @@ async function startAgentIssue(ctx: EngineCtx, st: Station, issue: PipelineIssue
     awaitTurn.set(st.id, { issueId: issue.id, sawWorking: false })
     const ok = await ctx.api.pty.sendText(st.id, prompt)
     if (!ok) throw new Error('sendText refused')
-  } catch {
+  } catch (e) {
     awaitTurn.delete(st.id)
-    patchIssue(ctx.projectId, issue.id, (i) =>
-      appendNote(
-        { ...i, status: 'waiting' },
-        '[engine] could not reach the agent session — check the station, then Advance or retry by moving the card.'
-      )
-    )
+    const note =
+      (e instanceof Error && ENGINE_NOTES[e.message]) ||
+      '[engine] could not reach the agent session — check the station, then Advance or retry by moving the card.'
+    patchIssue(ctx.projectId, issue.id, (i) => appendNote({ ...i, status: 'waiting' }, note))
   } finally {
     injecting.delete(issue.id)
   }
@@ -363,7 +438,10 @@ async function ensureAgentSession(ctx: EngineCtx, st: Station): Promise<void> {
       cwd: st.cwd,
       cols: 100,
       rows: 30,
-      agentId
+      agentId,
+      // CLAUDE_CONFIG_DIR is injected at spawn from this — the launch command alone does not
+      // select the identity (same as TerminalNode's create).
+      accountId: st.accountId
     })
     client = { transport, sessionId: res.sessionId }
     stationClients.set(st.id, client)
@@ -372,7 +450,10 @@ async function ensureAgentSession(ctx: EngineCtx, st: Station): Promise<void> {
       const launch = await composeLaunch(ctx, st, agentId, res.fresh)
       if (launch) {
         await deliverWhenShellReady(client.transport, client.sessionId, launch)
-        await waitForAgentUp(st.id, AGENT_UP_TIMEOUT_MS)
+        // A hook-less agent (custom CLI) never reports status — waiting on it would stall
+        // every fresh launch for the full timeout. Its readiness is judged by the pane
+        // check in startAgentIssue instead.
+        if (hasHooks(agentId)) await waitForAgentUp(st.id, AGENT_UP_TIMEOUT_MS)
         await sleep(AGENT_SETTLE_MS)
       }
     }
@@ -404,7 +485,9 @@ async function composeLaunch(
     undefined,
     undefined,
     undefined,
-    undefined,
+    // The station's accountId was resolved at creation (resolveNewNodeAccount — explicit pick →
+    // project default → system), the same immutable contract terminal agent nodes follow.
+    st.accountId,
     activePermissionMode(agentId)
   )
   const minted = proto.data.agentSessionId
@@ -512,7 +595,13 @@ function passConnector(
 
 /** Wired once by Canvas: advances an agent station's issue on its working→done transition.
  *  A done that arrives before the injected prompt ever produced `working` is a STALE turn
- *  (the previous conversation ending) and must not advance anything. */
+ *  (the previous conversation ending) and must not advance anything.
+ *
+ *  The transition may land while the user is on ANOTHER project (hooks POST by node id and the
+ *  tmux session doesn't pause with the tab), so the issue is resolved in its OWNING project —
+ *  serialized nodes are authoritative for a non-active project (the PipelineStrip rule) — and
+ *  the advance writes THERE. The moved issue starts at its next station when that project is
+ *  active again (tick reads live nodes of the active project only). */
 export function wireAgentTransitions(ctx: EngineCtx): () => void {
   return useAgentStatus.subscribe((s, prev) => {
     for (const [nodeId, wait] of awaitTurn) {
@@ -525,17 +614,41 @@ export function wireAgentTransitions(ctx: EngineCtx): () => void {
       }
       if (cur === 'done' && wait.sawWorking) {
         awaitTurn.delete(nodeId)
-        const p = pipelineOf(ctx.projectId)
-        const issue = p.issues.find((i) => i.id === wait.issueId)
+        const owner = issueOwner(wait.issueId, ctx)
+        if (!owner) continue
+        const issue = owner.pipeline.issues.find((i) => i.id === wait.issueId)
         if (!issue || issue.atNodeId !== nodeId || issue.status !== 'active') continue
-        const stations = ctx.getStations()
-        const edges = liveEdges(p.edges, stations)
+        const edges = liveEdges(owner.pipeline.edges, owner.stations)
         const edge = nextEdge(edges, nodeId)
-        if (edge) advanceIssue(ctx, issue.id, edge.to, 'next', edge.id, Date.now())
-        else advanceIssue(ctx, issue.id, undefined, 'done', undefined, Date.now())
+        advanceIssueIn(
+          ctx,
+          owner.projectId,
+          issue.id,
+          edge?.to,
+          edge ? 'next' : 'done',
+          edge?.id,
+          Date.now()
+        )
       }
     }
   })
+}
+
+/** The project whose pipeline holds the issue, with that project's station view: live React
+ *  Flow nodes for the active project, serialized store nodes otherwise. */
+function issueOwner(
+  issueId: string,
+  ctx: EngineCtx
+): { projectId: string; stations: Station[]; pipeline: ProjectPipeline } | null {
+  for (const p of useProjects.getState().projects) {
+    if (!p.pipeline?.issues.some((i) => i.id === issueId)) continue
+    return {
+      projectId: p.id,
+      stations: p.id === ctx.projectId ? ctx.getStations() : stationsOf(p.nodes),
+      pipeline: p.pipeline
+    }
+  }
+  return null
 }
 
 /** Counts shown as station badges: queued/active/waiting at one station. */

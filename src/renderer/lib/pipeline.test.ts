@@ -59,6 +59,21 @@ describe('stationOf', () => {
     expect(stationOf({ ...agent, kind: 'terminal' } as CanvasNodeState)).toBeNull()
   })
 
+  it('carries the managed account through to the engine (resolved once at creation)', () => {
+    const agent = {
+      id: 'a1',
+      kind: 'agent',
+      position: { x: 0, y: 0 },
+      size: { width: 1, height: 1 },
+      title: 'Builder',
+      color: '#fff',
+      group: null,
+      agentId: 'claude',
+      accountId: 'acct-1'
+    } as CanvasNodeState
+    expect(stationOf(agent)?.accountId).toBe('acct-1')
+  })
+
   it('defaults kanbanColumn to true and keeps an explicit false', () => {
     const base = {
       id: 'a1',

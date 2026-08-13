@@ -592,17 +592,40 @@ per-project pipeline; ISSUES flow through it and mirror onto the kanban board. I
   (unit-tested; chain order, decision resolution, column derivation, prompt composition —
   same issue + same config ⇒ byte-identical prompt). The engine (`renderer/state/pipeline.ts`)
   owns timers, station pty clients, and the one `agentStatus` subscription. Keep it that way.
-- **Engine contract**: acts on the ACTIVE project only (Canvas publishes `EngineCtx`;
+- **Engine contract**: STARTS issues on the ACTIVE project only (Canvas publishes `EngineCtx`;
   `getStations` reads LIVE React Flow nodes — the single-source-of-truth rule). A station's
   session uses **persistKey = node id**, the terminal-node contract, so tmux continuity, the
   session-memory panel and co-attach all see it. Fresh sessions get the SAME composed launch
-  a new agent node gets (`createAgentNode` — session-id mint persisted back onto the node);
-  warm sessions only get a launch typed at them when a SHELL owns the pane (`paneCommand`),
-  never into a live CLI. Prompts inject via `pty.sendText` (bracketed-paste aware).
+  a new agent node gets (`createAgentNode` — session-id mint persisted back onto the node;
+  `accountId` resolved once at station creation via `resolveNewNodeAccount`, injected at
+  create AND passed to the composed launch); warm sessions only get a launch typed at them
+  when a SHELL owns the pane (`paneCommand`), never into a live CLI. Prompts inject via
+  `pty.sendText` (bracketed-paste aware) — but ONLY once the pane is verifiably not a shell:
+  a multi-line prompt typed at a shell EXECUTES line by line (the note-push rule), so
+  `startAgentIssue` refuses (issue → `waiting` + note) when a shell owns the pane or the pane
+  is unknown with no status ever seen. `waitForAgentUp` resolving is NOT proof — it times out.
+- **Stations are local-only in v1.** The engine spawns without `sshRemote`, so on an SSH
+  project a station would become a LOCAL shell in a remote cwd — the "a remote node is NEVER
+  spawned locally" class. Every creation surface disables (menus/dock, with the reason) or
+  omits (⌘K) on `stationSshReason`, and `startAgentIssue` refuses as the backstop.
 - **Advance is hook-driven, gated on `sawWorking`**: an issue advances on the station's
   working→done transition observed AFTER its injection — a `done` that arrives without a
   `working` first is the PREVIOUS turn ending and must not advance anything. Agents without
-  hooks never auto-advance (manual Advance is the deterministic fallback).
+  hooks never auto-advance (manual Advance is the deterministic fallback; the station card
+  says so, and `ensureAgentSession` skips the status wait for them). The transition may land
+  while ANOTHER project is active (hooks POST by node id; tmux doesn't pause with the tab):
+  the advance resolves the issue's OWNING project (`issueOwner` — live nodes for the active
+  project, serialized store nodes otherwise) and writes THERE, never to the active pipeline.
+- **`active` is engine-held state, and the holds are in-memory** (`injecting`/`awaitTurn`/
+  dwell timers) — persisted `active` with no live holder (app restart, lost transition) would
+  block its station forever, so the tick SELF-HEALS: an active head with no hold re-queues
+  (a duplicate turn is visible and recoverable; a silently dead station is neither).
+- **Station delete owes the terminal-node teardown.** The station × routes through Canvas's
+  `deleteNodes` (a `nodeterm:delete-station` event — NOT React Flow's `deleteElements`, which
+  removes the card and leaves the session attached forever): `releaseStationClient` drops the
+  engine's background client FIRST (an attached session is invisible to the reaper), then
+  `transport.destroy` ends the tmux session. Project delete and the sessions-panel × do the
+  same.
 - **Loops are the point; `MAX_ISSUE_HOPS` (50) is the guard** — an issue over the limit goes
   `waiting` with a loop-limit note, never silently dropped, never spinning.
 - **Kanban mirror is DERIVED, never persisted**: `issueColumns` builds `Queue → chain → Done`

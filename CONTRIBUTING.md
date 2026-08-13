@@ -122,6 +122,13 @@ checklists for exactly this.
   them into `project.kanban`.
 - Connector stations store env var NAMES only. A secret value in project.json or a composed
   prompt is a bug, full stop.
+- Never inject a prompt into a pane a SHELL owns — a multi-line prompt typed at a shell
+  executes line by line. Verify the pane (status or `paneCommand`) before `sendText`.
+- An issue's `active` status is engine-held; the holds are in-memory. Any new path that sets
+  `active` must either hold it or be covered by the tick's self-heal (orphaned active → queued).
+- Deleting an agent station must release the engine's client AND destroy its tmux session
+  (route through Canvas `deleteNodes`, never React Flow's `deleteElements`).
+- Stations are local-only in v1 — disable creation with the reason on SSH projects, don't hide it.
 
 ## Pull requests
 

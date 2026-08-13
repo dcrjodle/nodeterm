@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Handle, NodeResizer, Position, useReactFlow, type NodeProps } from '@xyflow/react'
-import { AGENT_CONFIG, BUILTIN_AGENT_IDS, type AgentId } from '@shared/agents/config'
+import { AGENT_CONFIG, BUILTIN_AGENT_IDS, hasHooks, type AgentId } from '@shared/agents/config'
 import type { ConnectorService, DecisionRule } from '@shared/types'
 import type { CanvasNode } from '../state/workspace'
 import { useAgentStatus } from '../state/agentStatus'
@@ -69,7 +69,7 @@ function StationShell({
   headerExtra?: React.ReactNode
   children: React.ReactNode
 }): React.JSX.Element {
-  const { updateNodeData, deleteElements } = useReactFlow()
+  const { updateNodeData } = useReactFlow()
   const [editing, setEditing] = useState(false)
   const [before, setBefore] = useState('')
   const title = (data.title as string) || 'Untitled'
@@ -120,7 +120,12 @@ function StationShell({
         <button
           className="station__close nodrag"
           title="Delete station"
-          onClick={() => void deleteElements({ nodes: [{ id }] })}
+          onClick={() =>
+            // Routed through Canvas's deleteNodes (NOT React Flow's deleteElements) so a
+            // spawned agent-station session is destroyed and the engine's client released —
+            // deleteElements would remove the card and leave the tmux session attached forever.
+            window.dispatchEvent(new CustomEvent('nodeterm:delete-station', { detail: { nodeId: id } }))
+          }
         >
           ×
         </button>
@@ -187,6 +192,12 @@ export function AgentStationNode({ id, data, selected }: NodeProps<CanvasNode>):
               </option>
             ))}
           </select>
+          {!hasHooks(agentId as AgentId) && (
+            <div className="station__hint">
+              No status hooks — issues will not auto-advance past this station; use the card's
+              Advance button.
+            </div>
+          )}
         </div>
         <div className="station__block station__block--grow">
           <label className="station__label">assignment</label>

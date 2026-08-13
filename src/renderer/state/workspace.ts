@@ -710,7 +710,8 @@ export function createAgentStationNode(
   index: number,
   agentId: AgentId = 'claude',
   center?: { x: number; y: number },
-  cwd?: string
+  cwd?: string,
+  accountId?: string
 ): CanvasNode {
   return {
     id: nextId('agent'),
@@ -724,6 +725,8 @@ export function createAgentStationNode(
       color: STATION_COLORS.agent,
       group: null,
       agentId,
+      // Same rule as createAgentNode: the managed account is claude-only, resolved once here.
+      ...(accountId && agentId === 'claude' ? { accountId } : {}),
       cwd,
       assignment: '',
       kanbanColumn: true
