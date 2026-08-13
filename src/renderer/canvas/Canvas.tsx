@@ -191,6 +191,7 @@ import { opensInEditor } from '../lib/openTarget'
 import { newEntryPath, parentDir } from '../lib/explorerCreate'
 import { useProjects } from '../state/projects'
 import {
+  addIssue as pipelineAddIssue,
   prunePipeline,
   scheduleTick,
   setEngineCtx,
@@ -3504,6 +3505,14 @@ export function Canvas() {
     [setNodes, markDirty, emptyNodePos]
   )
 
+  const addIssueViaPrompt = useCallback(async () => {
+    const ctx = engineCtxRef.current
+    if (!ctx) return
+    const title = await promptDialog({ message: 'New issue — one line describing the work:' })
+    if (!title?.trim()) return
+    pipelineAddIssue(ctx, { title: title.trim() })
+  }, [])
+
   const addDino = useCallback(
     (center?: { x: number; y: number }) => {
       // Seed with the project record, maxed with any live dino nodes (pre-record projects
@@ -5506,6 +5515,7 @@ export function Canvas() {
         { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at) },
         { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at) },
         { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at) },
+        { label: 'New issue…', icon: <IconNote />, onClick: () => void addIssueViaPrompt() },
         { label: 'New sticky note', icon: <IconNote />, onClick: () => addSticky(at, groupId) },
         { type: 'separator' },
         ...(isHidden('colors', useSettings.getState().settings.hiddenNodeMenuItems)
@@ -5610,6 +5620,7 @@ export function Canvas() {
           { label: 'New agent station', icon: <IconNote />, onClick: () => addAgentStation(at) },
           { label: 'New decision', icon: <IconNote />, onClick: () => addDecisionStation(at) },
           { label: 'New connector', icon: <IconNote />, onClick: () => addConnectorStation(at) },
+          { label: 'New issue…', icon: <IconNote />, onClick: () => void addIssueViaPrompt() },
           { label: 'New sticky note', icon: <IconNote />, onClick: () => addSticky(at) },
           { label: 'New dino game', icon: <IconDino />, onClick: () => addDino(at) },
           { label: 'Open file…', icon: <IconEditor />, onClick: () => void openFileDialog(at) },
@@ -8297,6 +8308,7 @@ export function Canvas() {
       { id: 'new-station', label: 'New agent station', icon: <IconNote />, run: () => addAgentStation() },
       { id: 'new-decision', label: 'New decision station', icon: <IconNote />, run: () => addDecisionStation() },
       { id: 'new-connector', label: 'New connector station', icon: <IconNote />, run: () => addConnectorStation() },
+      { id: 'new-issue', label: 'New issue (pipeline)', icon: <IconNote />, run: () => void addIssueViaPrompt() },
       { id: 'new-sticky', label: 'New sticky note', icon: <IconNote />, run: () => addSticky() },
       { id: 'new-dino', label: 'New dino game', icon: <IconDino />, run: () => addDino() },
       { id: 'open-file', label: 'Open file…', icon: <IconEditor />, run: () => void openFileDialog() },

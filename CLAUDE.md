@@ -577,6 +577,43 @@ Monaco is wired in `renderer/editor/monaco-setup.ts` (language workers bundled v
 `?worker` — no CDN; CSP `worker-src` allows them). Markdown rendering is shared in
 `renderer/lib/markdown.ts` (`marked` + DOMPurify sanitize).
 
+## Loop-factory pipeline (agent / decision / connector stations)
+
+The fork's core addition (spec: `docs/superpowers/specs/2026-08-13-weave-loop-factory.md`).
+Three new node kinds — `agent | decision | connector` — chain via directed edges into a
+per-project pipeline; ISSUES flow through it and mirror onto the kanban board. Invariants:
+
+- **Persistence**: `Project.pipeline` (`{edges, issues}`) rides `.nodeterm/project.json`
+  exactly like `kanban` — spread in `projectToFile`/`fileToProject`, shape-guarded by
+  `validPipeline` on EVERY load path (file refs AND `workspace-store`'s inline branch), so a
+  mangled shape degrades to "no pipeline", never a render crash. Station config lives on
+  node `data` (assignment/rules/service/…, `kanbanColumn`), through both serializers.
+- **Pure/impure split**: ALL routing/topology/prompt logic is `renderer/lib/pipeline.ts`
+  (unit-tested; chain order, decision resolution, column derivation, prompt composition —
+  same issue + same config ⇒ byte-identical prompt). The engine (`renderer/state/pipeline.ts`)
+  owns timers, station pty clients, and the one `agentStatus` subscription. Keep it that way.
+- **Engine contract**: acts on the ACTIVE project only (Canvas publishes `EngineCtx`;
+  `getStations` reads LIVE React Flow nodes — the single-source-of-truth rule). A station's
+  session uses **persistKey = node id**, the terminal-node contract, so tmux continuity, the
+  session-memory panel and co-attach all see it. Fresh sessions get the SAME composed launch
+  a new agent node gets (`createAgentNode` — session-id mint persisted back onto the node);
+  warm sessions only get a launch typed at them when a SHELL owns the pane (`paneCommand`),
+  never into a live CLI. Prompts inject via `pty.sendText` (bracketed-paste aware).
+- **Advance is hook-driven, gated on `sawWorking`**: an issue advances on the station's
+  working→done transition observed AFTER its injection — a `done` that arrives without a
+  `working` first is the PREVIOUS turn ending and must not advance anything. Agents without
+  hooks never auto-advance (manual Advance is the deterministic fallback).
+- **Loops are the point; `MAX_ISSUE_HOPS` (50) is the guard** — an issue over the limit goes
+  `waiting` with a loop-limit note, never silently dropped, never spinning.
+- **Kanban mirror is DERIVED, never persisted**: `issueColumns` builds `Queue → chain → Done`
+  at render time from the stations (`kanbanColumn` toggles a station's column off; its issues
+  show in the nearest upstream column). The session board's persisted `kanban` is untouched —
+  the two systems cannot drift because one of them has no stored state.
+- **Connectors carry env var NAMES only.** Secret values never land in project.json (it is
+  git-shared) and never appear in prompts beyond the name + "never print its value".
+- **Surfaces**: pure renderer + workspace.save ⇒ desktop and Server Edition both work; the
+  engine's pty use degrades with the transport. Mobile: N/A v1 (no canvas).
+
 ## Agent support (Claude / Codex / Gemini / opencode / Grok / custom)
 
 The app is a pluggable multi-agent system: Claude Code is one builtin of

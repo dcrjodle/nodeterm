@@ -9447,6 +9447,323 @@ body,
   line-height: 14px;
 }
 
+/* ---- Pipeline board strip (Queue -> stations -> Done) + issue cards ---- */
+.pipe-board {
+  padding: 0 18px 6px;
+}
+
+.pipe-board__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-2);
+  font-size: 11px;
+  padding: 2px 2px 8px;
+}
+
+.pipe-board__badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.pipe-board__columns {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.pipe-col {
+  flex: 0 0 232px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  min-height: 120px;
+  max-height: 42vh;
+}
+
+.pipe-col.is-drop {
+  border-color: var(--accent);
+}
+
+.pipe-col__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.pipe-col__glyph {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pipe-col__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pipe-col__count {
+  color: var(--muted-2);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.pipe-col__cards {
+  flex: 1;
+  min-height: 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.pipe-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  cursor: pointer;
+}
+
+.pipe-card:hover {
+  border-color: rgba(var(--tint-rgb), 0.16);
+}
+
+.pipe-card--active {
+  border-color: var(--success);
+}
+
+.pipe-card--waiting {
+  border-color: var(--warn);
+}
+
+.pipe-card__title {
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.pipe-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.pipe-card__status {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pipe-card__status--active {
+  color: var(--success);
+}
+
+.pipe-card__status--waiting {
+  color: var(--warn);
+}
+
+.pipe-card__spin {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: nt-unread-glow 1.6s ease-in-out infinite;
+}
+
+.pipe-card__hops {
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.pipe-col__add {
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  color: var(--muted-2);
+  font-size: 11.5px;
+  padding: 7px;
+  cursor: pointer;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.pipe-col__add:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+
+/* ---- Issue modal ---- */
+.issue-modal__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 56;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.issue-modal {
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(640px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, calc(0.5 * var(--shadow-k)));
+}
+
+.issue-modal__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.issue-modal__title {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.issue-modal__close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.issue-modal__close:hover {
+  color: var(--text);
+  background: var(--panel-header);
+}
+
+.issue-modal__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.issue-modal__text {
+  min-height: 64px;
+  resize: vertical;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  padding: 7px 9px;
+  outline: none;
+  margin-bottom: 6px;
+}
+
+.issue-modal__text--notes {
+  min-height: 44px;
+}
+
+.issue-modal__text:focus {
+  border-color: var(--accent);
+}
+
+.issue-modal__routes {
+  margin-bottom: 6px;
+}
+
+.issue-modal__history {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.issue-modal__hop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.issue-modal__hop-name {
+  background: none;
+  border: none;
+  color: var(--accent-text);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+}
+
+.issue-modal__hop-time {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.issue-modal__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.issue-modal__delete {
+  margin-left: auto;
+  color: var(--danger);
+  border-color: transparent;
+  background: transparent;
+}
+
+.issue-modal__delete:hover {
+  background: rgba(229, 72, 77, 0.12);
+}
+
 /* Pipeline ports: the Weave ring look — dark core, colored 2px ring, grows on hover. */
 .pipe-handle.react-flow__handle {
   width: 12px;

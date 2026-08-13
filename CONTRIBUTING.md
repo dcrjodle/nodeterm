@@ -110,6 +110,19 @@ Where a behaviour can only be verified on hardware we do not have in CI (a Mac, 
 GPU), say so explicitly rather than implying coverage. Several docs carry numbered device
 checklists for exactly this.
 
+## Loop-factory pipeline — the short rules
+
+- Routing/topology/prompt logic goes in `renderer/lib/pipeline.ts` (pure, tested); side
+  effects (timers, pty clients, subscriptions) only in `renderer/state/pipeline.ts`.
+- `Project.pipeline` persists like `kanban`: spread it through `projectToFile`/`fileToProject`
+  and guard with `validPipeline` on every load path you add.
+- Issue advance is hook-driven (working→done AFTER injection). Never advance on a bare `done`,
+  never scrape terminal output to decide.
+- The pipeline's kanban columns are DERIVED from the stations at render time — do not persist
+  them into `project.kanban`.
+- Connector stations store env var NAMES only. A secret value in project.json or a composed
+  prompt is a bug, full stop.
+
 ## Pull requests
 
 - Branch from `main`. CI runs `quality`, `CodeQL` and `Dependency review`; all three are required.
